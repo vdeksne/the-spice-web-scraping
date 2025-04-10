@@ -66,41 +66,35 @@ export default {
 
       try {
         const response = await axios.get(
-          `http://localhost:8000/scrape?url=${encodeURIComponent(this.url)}`
+          `http://localhost:8001/scrape?url=${encodeURIComponent(this.url)}`
         );
-        const csvContent = response.data.csv_content;
-        this.parseCSV(csvContent);
+
+        // Handle the JSON response directly
+        if (Array.isArray(response.data)) {
+          this.products = response.data;
+        } else {
+          this.error = response.data.error || "Invalid response format";
+        }
       } catch (error) {
-        this.error = error.response?.data?.detail || "Error scraping products";
+        this.error =
+          error.response?.data?.error ||
+          error.message ||
+          "Error scraping products";
       } finally {
         this.loading = false;
       }
     },
-    parseCSV(csvContent) {
-      const lines = csvContent.split("\n");
-      const headers = lines[0].split(",");
-
-      this.products = lines.slice(1).map((line) => {
-        const values = line.split(",");
-        return {
-          name: values[0],
-          price: values[1],
-          weight: values[2],
-          price_per_kg: values[3],
-        };
-      });
-    },
     downloadCSV() {
       const headers = ["Product Name", "Price", "Weight", "Price per kg"];
       const csvContent = [
-        headers.join("\t"),
+        headers.join(","),
         ...this.products.map((item) =>
           [
-            `"${item.name}"`,
-            `"${item.price}"`,
-            `"${item.weight}"`,
+            `"${item.name || ""}"`,
+            `"${item.price || "N/A"}"`,
+            `"${item.weight || "N/A"}"`,
             `"${item.price_per_kg || "N/A"}"`,
-          ].join("\t")
+          ].join(",")
         ),
       ].join("\n");
 

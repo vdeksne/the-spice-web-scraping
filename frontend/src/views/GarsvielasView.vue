@@ -52,7 +52,7 @@ export default {
   name: "GarsvielasView",
   data() {
     return {
-      url: "https://www.safrans.lv/garsvielas_/garsvielas_un_garsaugi",
+      url: "https://www.garsvielas.lv/gar%C5%A1vielas",
       products: [],
       loading: false,
       error: null,

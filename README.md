@@ -1,79 +1,76 @@
-# Web Scraping Tool
+# Product Scraper
 
-A web scraping tool built with Python (FastAPI) and Vue 3 that allows you to scrape product information from websites and download the data in CSV format.
+A web application that scrapes product information from various e-commerce websites.
+
+## Project Structure
+
+- **Frontend**: Angular application
+- **Backend**: Python Flask server with web scraping functionality
 
 ## Features
 
-- Scrape product information from websites
-- Extract product names, prices, and price per kg
-- Download data in CSV format
-- Modern and responsive UI
+- Scrape products from Garsvielas.lv
+- Scrape products from Safrans.lv
+- Display product information in a table format
+- Export data to CSV
 
-## Prerequisites
+## Setup
 
-- Python 3.8+
-- Node.js 14+
-- npm
-
-## Setup and Running
-
-### Backend Setup
+### Backend
 
 1. Navigate to the backend directory:
 
-   ```bash
+   ```
    cd backend
    ```
 
-2. Create and activate virtual environment:
+2. Create and activate a virtual environment:
 
-   ```bash
+   ```
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 3. Install dependencies:
 
-   ```bash
+   ```
    pip install -r requirements.txt
    ```
 
-4. Run the backend server:
-   ```bash
-   uvicorn main:app --reload
+4. Run the Flask server:
+   ```
+   python app.py
    ```
 
-The backend will be running at http://localhost:8000
-
-### Frontend Setup
+### Frontend
 
 1. Navigate to the frontend directory:
 
-   ```bash
+   ```
    cd frontend
    ```
 
 2. Install dependencies:
 
-   ```bash
+   ```
    npm install
    ```
 
 3. Run the development server:
-   ```bash
+   ```
    npm run dev
    ```
 
-The frontend will be running at http://localhost:5173
-
 ## Usage
 
-1. Open your browser and go to http://localhost:5173
-2. Enter the website URL you want to scrape (e.g., https://www.garsvielas.lv)
-3. Click "Scrape Website" or press Enter
-4. The data will be automatically downloaded as a CSV file
+1. Open your browser and navigate to `http://localhost:5173`
+2. Enter the URL of the website you want to scrape
+3. Click "Scrape" to start the scraping process
+4. View the results in the table
+5. Export the data to CSV if needed
 
-## Note
+## Technologies Used
 
-Make sure both the backend and frontend servers are running simultaneously for the application to work properly.
-# web-scraping
+- **Frontend**: Angular, Vue.js, TypeScript
+- **Backend**: Python, Flask, BeautifulSoup, Requests
+- **Other**: Playwright for browser automation
