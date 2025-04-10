@@ -6,10 +6,20 @@ const url = ref("");
 const isLoading = ref(false);
 const error = ref("");
 const result = ref(null);
+const isSingleProduct = ref(false);
+
+const validateUrl = (url) => {
+  return url.startsWith("https://www.safrans.lv");
+};
 
 const scrapeWebsite = async () => {
   if (!url.value) {
     error.value = "Please enter a URL";
+    return;
+  }
+
+  if (!validateUrl(url.value)) {
+    error.value = "Please enter a valid Safrans website URL";
     return;
   }
 
@@ -59,27 +69,51 @@ const scrapeWebsite = async () => {
     isLoading.value = false;
   }
 };
+
+const updateUrlType = (value) => {
+  isSingleProduct.value = value.includes("garsvielas_un_garsaugi");
+};
 </script>
 
 <template>
   <div class="container">
-    <h1>Web Scraping Tool</h1>
+    <h1>Safrans Web Scraping Tool</h1>
+    <div class="description">
+      <p v-if="!isSingleProduct">
+        Enter the main Safrans website URL to scrape up to 10 products
+      </p>
+      <p v-else>Enter a specific product page URL to scrape that product</p>
+    </div>
     <div class="input-container">
       <input
         v-model="url"
         type="text"
-        placeholder="Enter product URL (e.g., https://www.safrans.lv/garsvielas_/garsvielas_un_garsaugi/anisa_seklas)"
+        @input="updateUrlType($event.target.value)"
+        :placeholder="
+          isSingleProduct
+            ? 'Enter product URL (e.g., https://www.safrans.lv/garsvielas_/garsvielas_un_garsaugi/anisa_seklas)'
+            : 'Enter website URL (e.g., https://www.safrans.lv)'
+        "
         @keyup.enter="scrapeWebsite"
       />
       <button @click="scrapeWebsite" :disabled="isLoading">
-        {{ isLoading ? "Scraping..." : "Scrape Product" }}
+        {{
+          isLoading
+            ? "Scraping..."
+            : isSingleProduct
+            ? "Scrape Product"
+            : "Scrape Website"
+        }}
       </button>
     </div>
     <div v-if="error" class="error">
       {{ error }}
     </div>
     <div v-if="isLoading" class="loading">
-      Scraping in progress... This may take a few moments.
+      <p>Scraping in progress... This may take a few moments.</p>
+      <p v-if="!isSingleProduct" class="note">
+        Note: The crawler will collect up to 10 products from the website.
+      </p>
     </div>
     <div v-if="result" class="result">
       <h3>Preview of scraped data:</h3>
@@ -97,7 +131,12 @@ const scrapeWebsite = async () => {
 }
 
 h1 {
-  color: #2c3e50;
+  color: white;
+  margin-bottom: 1rem;
+}
+
+.description {
+  color: #666;
   margin-bottom: 2rem;
 }
 
@@ -149,6 +188,12 @@ button:disabled {
   font-style: italic;
 }
 
+.note {
+  font-size: 0.9em;
+  color: #666;
+  margin-top: 0.5rem;
+}
+
 .result {
   margin-top: 2rem;
   text-align: left;
@@ -168,11 +213,8 @@ button:disabled {
   border-radius: 4px;
   color: black;
 }
+
 h3 {
   color: black;
-}
-
-h1 {
-  color: white;
 }
 </style>

@@ -6,7 +6,8 @@ import csv
 from io import StringIO
 import re
 import logging
-from urllib.parse import unquote
+from urllib.parse import urljoin, unquote
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -23,19 +24,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_product_links(soup, base_url):
-    """Extract product links from the main page"""
-    product_links = []
-    
-    # Find all links that might be product links
-    for link in soup.find_all('a', href=True):
-        href = link['href']
-        if 'product-page' in href:
-            full_url = urljoin(base_url, href)
-            product_links.append(full_url)
-            logger.info(f"Found product link: {full_url}")
-    
-    return product_links
+def get_category_links(soup):
+    """Extract category links with class 'dator'"""
+    links = []
+    for link in soup.find_all('a', class_='dator'):
+        if link.get('href'):
+            links.append(link['href'])
+            logger.info(f"Found category link: {link['href']}")
+    return links
+
+def get_subcategory_links(soup):
+    """Extract subcategory links from divs with class 'astota-uzraksts'"""
+    links = []
+    for div in soup.find_all('div', class_='astota-uzraksts'):
+        link = div.find('a')
+        if link and link.get('href'):
+            links.append(link['href'])
+            logger.info(f"Found subcategory link: {link['href']}")
+    return links
+
+def get_product_links(soup):
+    """Extract product links from img tags with class 'img-responsive'"""
+    links = []
+    for img in soup.find_all('img', class_='img-responsive'):
+        parent_link = img.find_parent('a')
+        if parent_link and parent_link.get('href'):
+            links.append(parent_link['href'])
+            logger.info(f"Found product link: {parent_link['href']}")
+    return links
 
 def extract_price_per_kg(price: float, weight_text: str) -> str:
     try:
@@ -58,7 +74,8 @@ def extract_price_per_kg(price: float, weight_text: str) -> str:
         logger.error(f"Error extracting price per kg: {e}")
         return "N/A"
 
-def scrape_product_page(url):
+def scrape_product_page(url, base_url):
+    """Scrape individual product page"""
     try:
         logger.info(f"Scraping product page: {url}")
         
@@ -66,12 +83,10 @@ def scrape_product_page(url):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        response = requests.get(url, headers=headers)
+        # Make sure URL is absolute
+        full_url = urljoin(base_url, url)
+        response = requests.get(full_url, headers=headers)
         response.raise_for_status()
-        
-        # Log the response content for debugging
-        logger.info(f"Response content length: {len(response.text)}")
-        logger.info(f"Response status code: {response.status_code}")
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -81,13 +96,6 @@ def scrape_product_page(url):
         if name_elem:
             name = name_elem.text.strip()
             logger.info(f"Found product name: {name}")
-        else:
-            logger.warning("Could not find product name (h2.title)")
-            # Try to find the name in other elements
-            name_elem = soup.find('h1')  # Try h1 tag
-            if name_elem:
-                name = name_elem.text.strip()
-                logger.info(f"Found product name in h1: {name}")
         
         # Find price (h2 with class 'price')
         price = None
@@ -100,16 +108,6 @@ def scrape_product_page(url):
             if price_match:
                 price = float(price_match.group(1).replace(',', '.'))
             logger.info(f"Found price: {price_text}")
-        else:
-            logger.warning("Could not find price (h2.price)")
-            # Try to find price in other elements
-            price_elem = soup.find(text=re.compile(r'\d+[.,]\d+\s*€'))
-            if price_elem:
-                price_text = price_elem.strip()
-                price_match = re.search(r'(\d+[.,]\d+)', price_text)
-                if price_match:
-                    price = float(price_match.group(1).replace(',', '.'))
-                logger.info(f"Found price in text: {price_text}")
         
         # Find weight options (labels with class 'radio')
         weights = []
@@ -121,20 +119,7 @@ def scrape_product_page(url):
                 logger.info(f"Found weight option: {weight_text}")
         
         if not weights:
-            logger.warning("No weight options found in labels.radio")
-            # Try to find weight in other elements
-            weight_elem = soup.find('select')
-            if weight_elem:
-                options = weight_elem.find_all('option')
-                for option in options:
-                    weight_text = option.text.strip()
-                    if weight_text:
-                        weights.append(weight_text)
-                        logger.info(f"Found weight option in select: {weight_text}")
-        
-        if not weights:
             weights = ["1 kg"]  # Default weight if none found
-            logger.warning("Using default weight: 1 kg")
         
         # Create product entries for each weight option
         products = []
@@ -147,14 +132,6 @@ def scrape_product_page(url):
                     "weight": weight,
                     "price_per_kg": price_per_kg
                 })
-                logger.info(f"Added product entry: {name}, {price_text}, {weight}, {price_per_kg}")
-        
-        if not products:
-            logger.warning("No products were created")
-            if not name:
-                logger.error("Missing product name")
-            if not price:
-                logger.error("Missing product price")
         
         return products
     
@@ -162,18 +139,101 @@ def scrape_product_page(url):
         logger.error(f"Error scraping product page: {e}")
         return []
 
+def crawl_website(base_url):
+    """Crawl the website following the specified navigation pattern"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Get main page
+        response = requests.get(base_url, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        all_products = []
+        product_count = 0
+        
+        # Get category links (a.dator)
+        category_links = get_category_links(soup)
+        
+        for category_url in category_links:
+            if product_count >= 10000:  # Limit to 10 results
+                break
+                
+            category_full_url = urljoin(base_url, category_url)
+            response = requests.get(category_full_url, headers=headers)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Get subcategory links (div.astota-uzraksts)
+            subcategory_links = get_subcategory_links(soup)
+            
+            for subcategory_url in subcategory_links:
+                if product_count >= 10000:  # Limit to 10 results
+                    break
+                    
+                subcategory_full_url = urljoin(base_url, subcategory_url)
+                response = requests.get(subcategory_full_url, headers=headers)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Get product links (img.img-responsive)
+                product_links = get_product_links(soup)
+                
+                for product_url in product_links:
+                    if product_count >= 10000:  # Limit to 10 results
+                        break
+                        
+                    products = scrape_product_page(product_url, base_url)
+                    all_products.extend(products)
+                    product_count += len(products)
+                    
+                    # Add a small delay between requests
+                    time.sleep(1)
+        
+        return all_products[:10000]  # Ensure we return max 10 results
+        
+    except Exception as e:
+        logger.error(f"Error crawling website: {e}")
+        return []
+
 @app.get("/scrape")
 async def scrape_website(url: str = Query(..., description="URL to scrape")):
     try:
-        # URL should already be properly encoded by the client
-        logger.info(f"Received URL: {url}")
+        logger.info(f"Starting scrape of website: {url}")
         
-        # Scrape the product page directly
-        products = scrape_product_page(url)
+        # Determine URL type and handle accordingly
+        if url == "https://www.safrans.lv":
+            # Main website URL - do full crawl
+            products = crawl_website(url)
+        elif "garsvielas_un_garsaugi" in url:
+            if url.count('/') >= 5:  # This is a product page URL
+                # Single product page
+                products = scrape_product_page(url, 'https://www.safrans.lv')
+            else:
+                # This is a category page - get product links and scrape each one
+                logger.info(f"Scraping category page: {url}")
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                response = requests.get(url, headers=headers)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                product_links = get_product_links(soup)
+                if not product_links:
+                    logger.warning(f"No product links found on category page: {url}")
+                    raise HTTPException(status_code=404, detail="No product links found on this category page")
+                
+                products = []
+                for product_url in product_links[:10000]:  # Limit to 10 products
+                    product_data = scrape_product_page(product_url, 'https://www.safrans.lv')
+                    products.extend(product_data)
+                    time.sleep(1)  # Be nice to the server
+        else:
+            raise HTTPException(status_code=400, detail="Invalid URL. Please provide either the main Safrans website URL or a product/category URL")
         
         if not products:
-            logger.warning("No products were successfully scraped!")
-            raise HTTPException(status_code=404, detail="No product information could be found on the page")
+            raise HTTPException(status_code=404, detail="No product information could be found")
         
         logger.info(f"Successfully scraped {len(products)} products")
         
@@ -195,6 +255,9 @@ async def scrape_website(url: str = Query(..., description="URL to scrape")):
     except requests.exceptions.RequestException as e:
         logger.error(f"Request error: {e}")
         raise HTTPException(status_code=500, detail=f"Error making request: {str(e)}")
+    except HTTPException as e:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.error(f"Error scraping website: {e}")
         raise HTTPException(status_code=500, detail=str(e))
