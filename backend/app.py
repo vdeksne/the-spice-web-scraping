@@ -1,7 +1,7 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from bs4 import BeautifulSoup
-import requests
+from flask import Flask, request, jsonify # type: ignore
+from flask_cors import CORS # type: ignore
+from bs4 import BeautifulSoup # type: ignore
+import requests # type: ignore
 import csv
 from io import StringIO
 import re
@@ -48,26 +48,6 @@ def get_product_links(soup):
             logger.info(f"Found product link: {parent_link['href']}")
     return links
 
-def calculate_total_price(base_price: float, weight_text: str) -> str:
-    """Calculate total price for given weight."""
-    try:
-        # Extract weight value and unit
-        weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(kg|g)', weight_text.lower())
-        if not weight_match:
-            return "N/A"
-            
-        value = float(weight_match.group(1).replace(',', '.'))
-        unit = weight_match.group(2)
-        
-        # Convert to kg if in grams
-        weight_kg = value if unit == 'kg' else value / 1000
-        
-        # Calculate total price
-        total_price = base_price * weight_kg * (1000 if unit == 'g' else 1)
-        return f"({total_price:.2f}€)"
-    except Exception as e:
-        logger.error(f"Error calculating total price: {e}")
-        return "N/A"
 
 def extract_price_per_kg(price: float, weight_text: str) -> str:
     try:
@@ -79,15 +59,37 @@ def extract_price_per_kg(price: float, weight_text: str) -> str:
         value = float(weight_match.group(1).replace(',', '.'))
         unit = weight_match.group(2)
         
-        # Convert to kg if in grams
-        weight_kg = value if unit == 'kg' else value / 1000
+        # Convert to grams for consistent calculation
+        weight_grams = value * 1000 if unit == 'kg' else value
         
-        if weight_kg > 0:
-            price_per_kg = price / weight_kg
-            return f"{price_per_kg:.2f}"
+        if weight_grams > 0:
+            # Calculate price per kg (1000g)
+            price_per_kg = (price / weight_grams) * 1000
+            return f"{price_per_kg:.2f}€"
         return "N/A"
     except Exception as e:
         logger.error(f"Error extracting price per kg: {e}")
+        return "N/A"
+    
+def calculate_total_price(base_price: float, weight_text: str) -> str:
+    """Calculate total price for given weight."""
+    try:
+        # Extract weight value and unit
+        weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(kg|g)', weight_text.lower())
+        if not weight_match:
+            return "N/A"
+            
+        value = float(weight_match.group(1).replace(',', '.'))
+        unit = weight_match.group(2)
+        
+        # Convert to grams for consistent calculation
+        weight_grams = value * 1000 if unit == 'kg' else value
+        
+        # Calculate total price (price per gram * weight in grams)
+        total_price = base_price * weight_grams
+        return f"{total_price:.2f}€"
+    except Exception as e:
+        logger.error(f"Error calculating total price: {e}")
         return "N/A"
 
 def format_price(price: float) -> str:
@@ -104,6 +106,19 @@ def format_price(price: float) -> str:
         return f"{euros}.{cents:02d}"
     except:
         return 'N/A'
+
+def extract_price_from_weight(weight_text: str) -> float:
+    """Extract price from weight text that contains price in parentheses."""
+    try:
+        # Extract price from text like "100 g (1.70€)"
+        price_match = re.search(r'\((\d+[.,]\d+)€\)', weight_text)
+        if price_match:
+            price_str = price_match.group(1).replace(',', '.')
+            return float(price_str)
+        return None
+    except Exception as e:
+        logger.error(f"Error extracting price from weight: {e}")
+        return None
 
 def scrape_product_page(url, base_url):
     """Scrape individual product page"""
@@ -156,14 +171,21 @@ def scrape_product_page(url, base_url):
         products = []
         for weight in weights:
             if name and price:
+                # Extract price from weight text if available
+                weight_price = extract_price_from_weight(weight)
+                
+                # Use weight price if available and different from main price
+                if weight_price is not None and abs(weight_price - price) > 0.01:  # Allow for small floating point differences
+                    logger.info(f"Using price from weight section: {weight_price} instead of {price}")
+                    price = weight_price
+                    price_text = f"{price:.2f}€"
+                
                 formatted_price = format_price(price)
-                total_price = calculate_total_price(price, weight)
-                weight_with_total = f"{weight} {total_price}"
                 price_per_kg = extract_price_per_kg(price, weight)
                 products.append({
                     "name": name,
                     "price": formatted_price,
-                    "weight": weight_with_total,
+                    "weight": weight,
                     "price_per_kg": price_per_kg
                 })
         
@@ -256,7 +278,7 @@ def scrape_website():
             # Create CSV content with proper formatting
             output = StringIO()
             # Write headers manually without quotes
-            output.write('Product Name,Price,Weight,Price per kg\n')
+            output.write('Product Name,Price (€),Weight (g),Price per kg (€)\n')
             
             # Write data manually without quotes
             for product in products:
@@ -314,7 +336,7 @@ def scrape_website():
         # Create CSV content
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Product Name", "Price", "Weight", "Price per kg"])
+        writer.writerow(["Product Name", "Price (€)", "Weight (g)", "Price per kg (€)"])
         
         for product in products:
             writer.writerow([

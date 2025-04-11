@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from bs4 import BeautifulSoup
-import requests
+from fastapi import FastAPI, HTTPException, Query # type: ignore
+from fastapi.middleware.cors import CORSMiddleware # type: ignore
+from bs4 import BeautifulSoup # type: ignore
+import requests # type: ignore
 import csv
 from io import StringIO
 import re
@@ -263,5 +263,5 @@ async def scrape_website(url: str = Query(..., description="URL to scrape")):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    import uvicorn
+    import uvicorn # type: ignore
     uvicorn.run(app, host="0.0.0.0", port=8000)

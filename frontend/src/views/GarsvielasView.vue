@@ -25,9 +25,9 @@
         <thead>
           <tr>
             <th>Product Name</th>
-            <th>Price</th>
-            <th>Weight</th>
-            <th>Price per kg</th>
+            <th>Price (€)</th>
+            <th>Weight (g)</th>
+            <th>Price per kg (€)</th>
           </tr>
         </thead>
         <tbody>
@@ -35,7 +35,7 @@
             <td>{{ product.name }}</td>
             <td>{{ product.price }}</td>
             <td>{{ product.weight }}</td>
-            <td>{{ product.price_per_kg }}</td>
+            <td>{{ product.pricePerKg }}</td>
           </tr>
         </tbody>
       </table>
@@ -65,33 +65,45 @@ export default {
       this.products = [];
 
       try {
-        const response = await axios.get(
-          `http://localhost:8000/scrape?url=${encodeURIComponent(this.url)}`
+        const response = await fetch(
+          `http://localhost:8003/scrape?url=${encodeURIComponent(this.url)}`
         );
-        const csvContent = response.data.csv_content;
-        this.parseCSV(csvContent);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+
+        // Parse CSV content
+        const csvContent = data.csv_content;
+        const lines = csvContent.split("\n");
+        const headers = lines[0].split(",");
+
+        for (let i = 1; i < lines.length; i++) {
+          if (lines[i].trim()) {
+            const values = lines[i].split(",");
+            const product = {
+              name: values[0],
+              price: values[1],
+              weight: values[2],
+              pricePerKg: values[3],
+            };
+            this.products.push(product);
+          }
+        }
       } catch (error) {
-        this.error = error.response?.data?.detail || "Error scraping products";
+        console.error("Error:", error);
+        this.error = error.message;
       } finally {
         this.loading = false;
       }
     },
-    parseCSV(csvContent) {
-      const lines = csvContent.split("\n");
-      const headers = lines[0].split(",");
-
-      this.products = lines.slice(1).map((line) => {
-        const values = line.split(",");
-        return {
-          name: values[0],
-          price: values[1],
-          weight: values[2],
-          price_per_kg: values[3],
-        };
-      });
-    },
     downloadCSV() {
-      const headers = ["Product Name", "Price", "Weight", "Price per kg"];
+      const headers = [
+        "Product Name",
+        "Price (€)",
+        "Weight (g)",
+        "Price per kg (€)",
+      ];
       const csvContent = [
         headers.join("\t"),
         ...this.products.map((item) =>
@@ -99,7 +111,7 @@ export default {
             `"${item.name}"`,
             `"${item.price}"`,
             `"${item.weight}"`,
-            `"${item.price_per_kg || "N/A"}"`,
+            `"${item.pricePerKg || "N/A"}"`,
           ].join("\t")
         ),
       ].join("\n");

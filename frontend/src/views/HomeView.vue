@@ -25,9 +25,9 @@
         <thead>
           <tr>
             <th>Product Name</th>
-            <th>Price</th>
-            <th>Weight</th>
-            <th>Price per kg</th>
+            <th>Price (€)</th>
+            <th>Weight (g)</th>
+            <th>Price per kg (€)</th>
           </tr>
         </thead>
         <tbody>
@@ -65,27 +65,45 @@ export default {
       this.products = [];
 
       try {
-        const response = await axios.get(
-          `http://localhost:8001/scrape?url=${encodeURIComponent(this.url)}`
+        const response = await fetch(
+          `http://localhost:8003/scrape?url=${encodeURIComponent(this.url)}`
         );
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
 
-        // Handle the JSON response directly
-        if (Array.isArray(response.data)) {
-          this.products = response.data;
-        } else {
-          this.error = response.data.error || "Invalid response format";
+        // Parse CSV content
+        const csvContent = data.csv_content;
+        const lines = csvContent.split("\n");
+        const headers = lines[0].split(",");
+
+        for (let i = 1; i < lines.length; i++) {
+          if (lines[i].trim()) {
+            const values = lines[i].split(",");
+            const product = {
+              name: values[0],
+              price: values[1],
+              weight: values[2],
+              price_per_kg: values[3],
+            };
+            this.products.push(product);
+          }
         }
       } catch (error) {
-        this.error =
-          error.response?.data?.error ||
-          error.message ||
-          "Error scraping products";
+        console.error("Error:", error);
+        this.error = error.message;
       } finally {
         this.loading = false;
       }
     },
     downloadCSV() {
-      const headers = ["Product Name", "Price", "Weight", "Price per kg"];
+      const headers = [
+        "Product Name",
+        "Price (€)",
+        "Weight (g)",
+        "Price per kg (€)",
+      ];
       const csvContent = [
         headers.join(","),
         ...this.products.map((item) =>
