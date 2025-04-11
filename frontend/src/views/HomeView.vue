@@ -66,7 +66,9 @@ export default {
 
       try {
         const response = await fetch(
-          `http://localhost:8003/scrape?url=${encodeURIComponent(this.url)}`
+          `http://localhost:8003/scrape?url=${encodeURIComponent(
+            this.url
+          )}&format=csv`
         );
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);

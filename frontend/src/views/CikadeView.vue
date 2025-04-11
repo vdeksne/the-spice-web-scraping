@@ -8,6 +8,13 @@
         placeholder="Enter URL to scrape"
         class="url-input"
       />
+      <input
+        v-model.number="maxProducts"
+        type="number"
+        min="1"
+        placeholder="Max products"
+        class="max-products-input"
+      />
       <button @click="scrapeProducts" class="scrape-button">
         Scrape Products
       </button>
@@ -25,9 +32,9 @@
         <thead>
           <tr>
             <th>Product Name</th>
-            <th>Price</th>
-            <th>Weight</th>
-            <th>Price per kg</th>
+            <th>Price (€)</th>
+            <th>Weight (g)</th>
+            <th>Price per kg (€)</th>
           </tr>
         </thead>
         <tbody>
@@ -52,7 +59,8 @@ export default {
   name: "CikadeView",
   data() {
     return {
-      url: "https://www.safrans.lv/cikade_/cikade_un_garamielas",
+      url: "https://cikade.lv/product-category/garsvielas/",
+      maxProducts: 10,
       products: [],
       loading: false,
       error: null,
@@ -65,42 +73,46 @@ export default {
       this.products = [];
 
       try {
-        const response = await axios.get(
-          `http://localhost:8000/scrape?url=${encodeURIComponent(this.url)}`
+        const response = await fetch(
+          `http://localhost:8003/scrape?url=${encodeURIComponent(
+            this.url
+          )}&limit=${this.maxProducts}&format=json&scraper=cikade`
         );
-        const csvContent = response.data.csv_content;
-        this.parseCSV(csvContent);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+
+        // Process the JSON data directly
+        this.products = data.map((item) => ({
+          name: item.name,
+          price: item.price,
+          weight: item.weight,
+          price_per_kg: item.price_per_kg,
+        }));
       } catch (error) {
-        this.error = error.response?.data?.detail || "Error scraping products";
+        console.error("Error:", error);
+        this.error = error.message;
       } finally {
         this.loading = false;
       }
     },
-    parseCSV(csvContent) {
-      const lines = csvContent.split("\n");
-      const headers = lines[0].split(",");
-
-      this.products = lines.slice(1).map((line) => {
-        const values = line.split(",");
-        return {
-          name: values[0],
-          price: values[1],
-          weight: values[2],
-          price_per_kg: values[3],
-        };
-      });
-    },
     downloadCSV() {
-      const headers = ["Product Name", "Price", "Weight", "Price per kg"];
+      const headers = [
+        "Product Name",
+        "Price (€)",
+        "Weight (g)",
+        "Price per kg (€)",
+      ];
       const csvContent = [
-        headers.join("\t"),
+        headers.join(","),
         ...this.products.map((item) =>
           [
             `"${item.name}"`,
             `"${item.price}"`,
             `"${item.weight}"`,
             `"${item.price_per_kg || "N/A"}"`,
-          ].join("\t")
+          ].join(",")
         ),
       ].join("\n");
 
@@ -130,6 +142,14 @@ export default {
   padding: 0.5rem;
   border: 1px solid #ddd;
   border-radius: 4px;
+}
+
+.max-products-input {
+  width: 120px;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-right: 1rem;
 }
 
 .scrape-button,

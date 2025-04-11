@@ -76,7 +76,7 @@ export default {
         const response = await fetch(
           `http://localhost:8003/scrape?url=${encodeURIComponent(
             this.url
-          )}&limit=${this.maxProducts}`
+          )}&limit=${this.maxProducts}&format=json`
         );
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
