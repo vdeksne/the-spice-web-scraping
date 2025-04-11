@@ -1,21 +1,52 @@
-# Web Scraping Tool
+# Web Scraping Project
 
-A web scraping tool built with Python (FastAPI) and Vue 3 that allows you to scrape product information from websites and download the data in CSV format.
+This project is a web scraping application that allows users to scrape product information from various e-commerce websites. The application consists of a frontend built with Vue.js and a backend built with Flask.
 
 ## Features
 
-- Scrape product information from websites
-- Extract product names, prices, and price per kg
-- Download data in CSV format
-- Modern and responsive UI
+### Safrans Scraper
 
-## Prerequisites
+- Scrapes product information from safrans.lv
+- Extracts product names, prices, weights, and price per kg
+- Supports CSV export of scraped data
+- Handles both category pages and individual product pages
 
-- Python 3.8+
-- Node.js 14+
-- npm
+### Garsvielas Scraper
 
-## Setup and Running
+- Scrapes product information from garsvielas.lv
+- Extracts product names, prices, weights, and price per kg
+- Supports CSV export of scraped data
+- Handles products with multiple weight options
+
+### Cikade Scraper
+
+- Scrapes product information from cikade.lv
+- Extracts product names, prices, weights, and price per kg
+- Supports CSV export of scraped data
+- Handles products with multiple weight options
+- Automatically processes all available weight options for each product
+- Visual scraping process with browser automation
+
+## Project Structure
+
+```
+.
+├── backend/
+│   ├── app.py                 # Flask backend server
+│   ├── safrans_scraper.py     # Safrans scraping logic
+│   ├── garsvielas_scraper.py  # Garsvielas scraping logic
+│   └── cikade_scraper.py      # Cikade scraping logic
+├── frontend/
+│   ├── src/
+│   │   ├── components/        # Vue components
+│   │   ├── views/            # Vue views
+│   │   ├── router/           # Vue router
+│   │   └── App.vue           # Main Vue component
+│   └── package.json          # Frontend dependencies
+└── README.md                 # Project documentation
+```
+
+## Setup
 
 ### Backend Setup
 
@@ -25,25 +56,16 @@ A web scraping tool built with Python (FastAPI) and Vue 3 that allows you to scr
    cd backend
    ```
 
-2. Create and activate virtual environment:
-
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
+2. Install Python dependencies:
 
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Run the backend server:
+3. Start the Flask server:
    ```bash
-   uvicorn main:app --reload
+   python app.py
    ```
-
-The backend will be running at http://localhost:8000
 
 ### Frontend Setup
 
@@ -53,28 +75,70 @@ The backend will be running at http://localhost:8000
    cd frontend
    ```
 
-2. Install dependencies:
+2. Install Node.js dependencies:
 
    ```bash
    npm install
    ```
 
-3. Run the development server:
+3. Start the development server:
    ```bash
    npm run dev
    ```
 
-The frontend will be running at http://localhost:5173
-
 ## Usage
 
-1. Open your browser and go to http://localhost:5173
-2. Enter the website URL you want to scrape (e.g., https://www.garsvielas.lv)
-3. Click "Scrape Website" or press Enter
-4. The data will be automatically downloaded as a CSV file
+### Safrans Scraper
 
-## Note
+1. Navigate to the Safrans scraper page
+2. Enter a URL from safrans.lv (e.g., https://www.safrans.lv/garsvielas_/garsvielas_un_garsaugi)
+3. Click "Scrape Products"
+4. View the scraped products in the table
+5. Click "Download CSV" to export the data
 
-Make sure both the backend and frontend servers are running simultaneously for the application to work properly.
+### Garsvielas Scraper
+
+1. Navigate to the Garsvielas scraper page
+2. Enter a URL from garsvielas.lv
+3. Click "Scrape Products"
+4. View the scraped products in the table
+5. Click "Download CSV" to export the data
+
+### Cikade Scraper
+
+1. Navigate to the Cikade scraper page
+2. Enter a URL from cikade.lv (default: https://cikade.lv/product-category/garsvielas/)
+3. Set the maximum number of products to scrape (optional)
+4. Click "Scrape Products"
+5. Watch the automated scraping process in the browser
+6. View the scraped products in the table
+7. Click "Download CSV" to export the data
+
+## Dependencies
+
+### Backend
+
+- Flask
+- Flask-CORS
+- BeautifulSoup4
+- Requests
+- Playwright
+
+### Frontend
+
+- Vue.js
+- Vue Router
+- Axios
+
+## Contributing
+
+1. Fork the repository
+2. Create a new branch for your feature
+3. Make your changes
+4. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 # web-scraping
