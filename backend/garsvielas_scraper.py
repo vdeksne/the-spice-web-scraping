@@ -9,25 +9,61 @@ import re
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def calculate_price_per_kg(price: str, weight: str = None) -> str:
+def calculate_price_per_kg(price: float, weight_str: str) -> str:
     """Calculate price per kg if possible."""
-    if weight is None:
-        return "N/A"
+    if weight_str == 'N/A':
+        return 'N/A'
     
     try:
-        # Extract numeric values from price and weight
-        price_value = float(price.replace('€', '').strip())
-        weight_value = float(weight.replace('g', '').strip())
+        # Extract numeric value and unit from weight string
+        match = re.search(r'(\d+(?:\.\d+)?)\s*(g|kg)', weight_str.lower())
+        if not match:
+            return 'N/A'
+            
+        value = float(match.group(1))
+        unit = match.group(2)
         
-        # Calculate price per kg (convert grams to kg)
-        price_per_kg = (price_value / weight_value) * 1000
-        return f"{price_per_kg:.2f}€/kg"
-    except (ValueError, ZeroDivisionError):
-        return "N/A"
+        # Convert to kg if in grams
+        weight_kg = value if unit == 'kg' else value / 1000
+        
+        if weight_kg > 0:
+            price_per_kg = price / weight_kg
+            # Format with dot and 2 decimal places
+            return f"{int(price_per_kg)}.{int((price_per_kg % 1) * 100):02d}"
+        return 'N/A'
+    except Exception as e:
+        logger.error(f"Error calculating price per kg: {e}")
+        return 'N/A'
 
-def clean_price(price_text: str) -> str:
-    """Clean price text by removing currency symbols and 'No' prefix."""
-    return price_text.replace('No', '').replace('€', '').strip()
+def clean_price(price_text: str) -> float:
+    """Clean price text and return raw float value."""
+    try:
+        # Remove any currency symbols and whitespace
+        cleaned = price_text.replace('No', '').replace('€', '').strip()
+        # Extract the numeric value using regex
+        match = re.search(r'(\d+(?:[.,]\d+)?)', cleaned)
+        if match:
+            # Replace comma with dot for float conversion
+            price_str = match.group(1).replace(',', '.')
+            return float(price_str)
+        return 0.0
+    except ValueError:
+        return 0.0
+
+def format_price(price: float) -> str:
+    """Format price with dot between euros and cents."""
+    if isinstance(price, str):
+        return price
+    if price == 0.0:
+        return 'N/A'
+    try:
+        # Split into euros and cents
+        euros = int(price)
+        cents = int(round((price - euros) * 100))
+        # Format with dot
+        return f"{euros}.{cents:02d}"
+    except:
+        return 'N/A'
 
 async def scrape_garsvielas(url=None):
     async with async_playwright() as p:
@@ -97,14 +133,23 @@ async def scrape_garsvielas(url=None):
             results = []
             for name_elem in product_names:
                 try:
-                    # Get product name
+                    # Get product name and extract weight if present
                     name = await name_elem.inner_text()
                     name = name.strip()
-                    logger.info(f"Found product name: {name}")
+                    
+                    # Extract weight from name if present
+                    weight_pattern = r'\s+(\d+(?:\.\d+)?(?:g|kg))(?:\s+|$)'
+                    weight_match = re.search(weight_pattern, name)
+                    weight = weight_match.group(1) if weight_match else None
+                    
+                    # Remove weight from name if found
+                    if weight_match:
+                        name = name[:weight_match.start()].strip()
+                    
+                    logger.info(f"Found product name: {name}, weight: {weight}")
                     
                     # Find the parent product item
                     container = await name_elem.evaluate("""node => {
-                        // Find the parent container with product name and price
                         const container = node.closest('[data-hook="product-item-name-and-price-layout"]');
                         if (!container) {
                             console.log('Could not find product container');
@@ -135,14 +180,9 @@ async def scrape_garsvielas(url=None):
                                 return null;
                             }
                             
-                            console.log('Prices container HTML:', pricesContainer.outerHTML);
-                            
                             // Try to find the price elements
                             const priceToPay = pricesContainer.querySelector('[data-hook="product-item-price-to-pay"]');
                             const priceFrom = pricesContainer.querySelector('[data-hook="price-range-from"]');
-                            
-                            console.log('Price to pay element:', priceToPay ? priceToPay.outerHTML : 'not found');
-                            console.log('Price from element:', priceFrom ? priceFrom.outerHTML : 'not found');
                             
                             // Return the price text, preferring price-to-pay over price-from
                             if (priceToPay) {
@@ -151,7 +191,6 @@ async def scrape_garsvielas(url=None):
                                 return priceFrom.textContent.trim();
                             }
                             
-                            console.log('No price elements found in container');
                             return null;
                         } catch (error) {
                             console.error('Error finding price:', error);
@@ -160,15 +199,20 @@ async def scrape_garsvielas(url=None):
                     }""", container)
                     
                     if price:
-                        price = clean_price(price)
-                        logger.info(f"Found price for {name}: {price}")
+                        raw_price = clean_price(price)
+                        formatted_price = format_price(raw_price)
+                        logger.info(f"Found price for {name}: {formatted_price}")
+                        
+                        # Calculate price per kg
+                        price_per_kg = calculate_price_per_kg(raw_price, weight if weight else 'N/A')
+                        logger.info(f"Calculated price per kg: {price_per_kg}")
                         
                         # Create product object
                         product = {
                             'name': name,
-                            'price': price,
-                            'weight': None,  # We'll handle weight extraction later if needed
-                            'price_per_kg': None  # We'll calculate this later if needed
+                            'price': formatted_price,
+                            'weight': weight if weight else 'N/A',
+                            'price_per_kg': price_per_kg
                         }
                         results.append(product)
                     else:
@@ -184,7 +228,7 @@ async def scrape_garsvielas(url=None):
             
             for product in results:
                 name = product['name']
-                price = product['price'] if product['price'] is not None else 'N/A'
+                price = product['price']
                 weight = product['weight'] if product['weight'] is not None else 'N/A'
                 price_per_kg = product['price_per_kg'] if product['price_per_kg'] is not None else 'N/A'
                 
@@ -211,17 +255,20 @@ def export_to_csv(products: List[Dict[str, str]], filename: str = "garsvielas_pr
     """Export products to CSV file."""
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            # Write headers
-            writer.writerow(['Product Name', 'Price', 'Weight', 'Price per kg'])
-            # Write data
+            # Write headers manually
+            f.write('Product Name,Price,Weight,Price per kg\n')
+            
+            # Write data manually to have full control over formatting
             for product in products:
-                writer.writerow([
-                    product['name'],
-                    product['price'],
-                    product['weight'] or 'N/A',
-                    product['price_per_kg']
-                ])
+                name = product['name'].strip().replace('"', '').replace(',', ' ')
+                price = product['price']  # Already formatted
+                weight = product['weight'].strip().replace('"', '') if product['weight'] else 'N/A'
+                price_per_kg = product['price_per_kg'].strip().replace('"', '') if product['price_per_kg'] else 'N/A'
+                
+                # Format the line manually
+                line = f"{name},{price},{weight},{price_per_kg}\n"
+                f.write(line)
+                
         logger.info(f"Successfully exported {len(products)} products to {filename}")
     except Exception as e:
         logger.error(f"Error exporting to CSV: {str(e)}")

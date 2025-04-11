@@ -1,5 +1,5 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from bs4 import BeautifulSoup
 import requests
 import csv
@@ -8,16 +8,21 @@ import re
 import logging
 from urllib.parse import urljoin, unquote
 import time
-import asyncio
-from garsvielas_scraper import scrape_garsvielas
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+app = FastAPI()
+
 # Enable CORS
-CORS(app)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def get_category_links(soup):
     """Extract category links with class 'dator'"""
@@ -48,27 +53,6 @@ def get_product_links(soup):
             logger.info(f"Found product link: {parent_link['href']}")
     return links
 
-def calculate_total_price(base_price: float, weight_text: str) -> str:
-    """Calculate total price for given weight."""
-    try:
-        # Extract weight value and unit
-        weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(kg|g)', weight_text.lower())
-        if not weight_match:
-            return "N/A"
-            
-        value = float(weight_match.group(1).replace(',', '.'))
-        unit = weight_match.group(2)
-        
-        # Convert to kg if in grams
-        weight_kg = value if unit == 'kg' else value / 1000
-        
-        # Calculate total price
-        total_price = base_price * weight_kg * (1000 if unit == 'g' else 1)
-        return f"({total_price:.2f}€)"
-    except Exception as e:
-        logger.error(f"Error calculating total price: {e}")
-        return "N/A"
-
 def extract_price_per_kg(price: float, weight_text: str) -> str:
     try:
         # Extract weight value and unit
@@ -84,26 +68,11 @@ def extract_price_per_kg(price: float, weight_text: str) -> str:
         
         if weight_kg > 0:
             price_per_kg = price / weight_kg
-            return f"{price_per_kg:.2f}"
+            return f"{price_per_kg:.2f} €/kg"
         return "N/A"
     except Exception as e:
         logger.error(f"Error extracting price per kg: {e}")
         return "N/A"
-
-def format_price(price: float) -> str:
-    """Format price with dot between euros and cents."""
-    if isinstance(price, str):
-        return price
-    if price == 0.0:
-        return 'N/A'
-    try:
-        # Split into euros and cents
-        euros = int(price)
-        cents = int(round((price - euros) * 100))
-        # Format with dot
-        return f"{euros}.{cents:02d}"
-    except:
-        return 'N/A'
 
 def scrape_product_page(url, base_url):
     """Scrape individual product page"""
@@ -156,14 +125,11 @@ def scrape_product_page(url, base_url):
         products = []
         for weight in weights:
             if name and price:
-                formatted_price = format_price(price)
-                total_price = calculate_total_price(price, weight)
-                weight_with_total = f"{weight} {total_price}"
                 price_per_kg = extract_price_per_kg(price, weight)
                 products.append({
                     "name": name,
-                    "price": formatted_price,
-                    "weight": weight_with_total,
+                    "price": price_text,
+                    "weight": weight,
                     "price_per_kg": price_per_kg
                 })
         
@@ -230,73 +196,33 @@ def crawl_website(base_url):
         logger.error(f"Error crawling website: {e}")
         return []
 
-@app.route('/scrape', methods=['GET'])
-def scrape_website():
+@app.get("/scrape")
+async def scrape_website(url: str = Query(..., description="URL to scrape")):
     try:
-        url = request.args.get('url')
-        if not url:
-            return jsonify({'error': 'URL parameter is required'}), 400
-            
-        # Decode the URL properly
-        decoded_url = unquote(url)
-        logger.info(f"Starting scrape of website: {decoded_url}")
+        logger.info(f"Starting scrape of website: {url}")
         
         # Determine URL type and handle accordingly
-        if 'garsvielas.lv' in decoded_url:
-            logger.info(f"Scraping Garsvielas URL: {decoded_url}")
-            # Run the Garsvielas scraper in an event loop
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            products = loop.run_until_complete(scrape_garsvielas(decoded_url))
-            loop.close()
-            
-            if not products:
-                return jsonify({'error': 'No product information could be found'}), 404
-            
-            # Create CSV content with proper formatting
-            output = StringIO()
-            # Write headers manually without quotes
-            output.write('Product Name,Price,Weight,Price per kg\n')
-            
-            # Write data manually without quotes
-            for product in products:
-                name = product['name'].strip() if product['name'] else ''
-                price = product['price'].strip() if product['price'] else 'N/A'
-                weight = product['weight'].strip() if product['weight'] else 'N/A'
-                price_per_kg = product['price_per_kg'].strip() if product['price_per_kg'] else 'N/A'
-                
-                # Remove any existing quotes or backslashes
-                name = name.replace('"', '').replace('\\', '').replace(',', ' ')
-                price = price.replace('"', '').replace('\\', '').replace(',', ' ')
-                weight = weight.replace('"', '').replace('\\', '').replace(',', ' ')
-                price_per_kg = price_per_kg.replace('"', '').replace('\\', '').replace(',', ' ')
-                
-                # Write row manually without quotes
-                output.write(f'{name},{price},{weight},{price_per_kg}\n')
-            
-            return jsonify({"csv_content": output.getvalue()})
-            
-        elif decoded_url == "https://www.safrans.lv":
+        if url == "https://www.safrans.lv":
             # Main website URL - do full crawl
-            products = crawl_website(decoded_url)
-        elif "garsvielas_un_garsaugi" in decoded_url:
-            if decoded_url.count('/') >= 5:  # This is a product page URL
+            products = crawl_website(url)
+        elif "garsvielas_un_garsaugi" in url:
+            if url.count('/') >= 5:  # This is a product page URL
                 # Single product page
-                products = scrape_product_page(decoded_url, 'https://www.safrans.lv')
+                products = scrape_product_page(url, 'https://www.safrans.lv')
             else:
                 # This is a category page - get product links and scrape each one
-                logger.info(f"Scraping category page: {decoded_url}")
+                logger.info(f"Scraping category page: {url}")
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                 }
-                response = requests.get(decoded_url, headers=headers)
+                response = requests.get(url, headers=headers)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
                 product_links = get_product_links(soup)
                 if not product_links:
-                    logger.warning(f"No product links found on category page: {decoded_url}")
-                    return jsonify({'error': 'No product links found on this category page'}), 404
+                    logger.warning(f"No product links found on category page: {url}")
+                    raise HTTPException(status_code=404, detail="No product links found on this category page")
                 
                 products = []
                 for product_url in product_links[:10000]:  # Limit to 10 products
@@ -304,10 +230,10 @@ def scrape_website():
                     products.extend(product_data)
                     time.sleep(1)  # Be nice to the server
         else:
-            return jsonify({'error': 'Invalid URL. Please provide a URL from garsvielas.lv or safrans.lv'}), 400
+            raise HTTPException(status_code=400, detail="Invalid URL. Please provide either the main Safrans website URL or a product/category URL")
         
         if not products:
-            return jsonify({'error': 'No product information could be found'}), 404
+            raise HTTPException(status_code=404, detail="No product information could be found")
         
         logger.info(f"Successfully scraped {len(products)} products")
         
@@ -324,14 +250,18 @@ def scrape_website():
                 product["price_per_kg"]
             ])
         
-        return jsonify({"csv_content": output.getvalue()})
+        return {"csv_content": output.getvalue()}
     
     except requests.exceptions.RequestException as e:
         logger.error(f"Request error: {e}")
-        return jsonify({'error': f'Error making request: {str(e)}'}), 500
+        raise HTTPException(status_code=500, detail=f"Error making request: {str(e)}")
+    except HTTPException as e:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.error(f"Error scraping website: {e}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8003) 
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000) 
