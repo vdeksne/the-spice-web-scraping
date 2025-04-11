@@ -253,107 +253,36 @@ def crawl_website(base_url):
         return []
 
 @app.route('/scrape', methods=['GET'])
-def scrape_website():
+async def scrape_website():
+    """Endpoint to scrape website data"""
     try:
         url = request.args.get('url')
+        limit = request.args.get('limit', type=int)  # Get limit parameter as integer
+        
         if not url:
             return jsonify({'error': 'URL parameter is required'}), 400
             
-        # Decode the URL properly
-        decoded_url = unquote(url)
-        logger.info(f"Starting scrape of website: {decoded_url}")
+        # Decode URL if it's encoded
+        url = unquote(url)
+        logger.info(f"Received scrape request for URL: {url}")
+        logger.info(f"Product limit set to: {limit if limit else 'unlimited'}")
         
-        # Determine URL type and handle accordingly
-        if 'garsvielas.lv' in decoded_url:
-            logger.info(f"Scraping Garsvielas URL: {decoded_url}")
-            # Run the Garsvielas scraper in an event loop
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            products = loop.run_until_complete(scrape_garsvielas(decoded_url))
-            loop.close()
-            
-            if not products:
-                return jsonify({'error': 'No product information could be found'}), 404
-            
-            # Create CSV content with proper formatting
-            output = StringIO()
-            # Write headers manually without quotes
-            output.write('Product Name,Price (€),Weight (g),Price per kg (€)\n')
-            
-            # Write data manually without quotes
-            for product in products:
-                name = product['name'].strip() if product['name'] else ''
-                price = product['price'].strip() if product['price'] else 'N/A'
-                weight = product['weight'].strip() if product['weight'] else 'N/A'
-                price_per_kg = product['price_per_kg'].strip() if product['price_per_kg'] else 'N/A'
-                
-                # Remove any existing quotes or backslashes
-                name = name.replace('"', '').replace('\\', '').replace(',', ' ')
-                price = price.replace('"', '').replace('\\', '').replace(',', ' ')
-                weight = weight.replace('"', '').replace('\\', '').replace(',', ' ')
-                price_per_kg = price_per_kg.replace('"', '').replace('\\', '').replace(',', ' ')
-                
-                # Write row manually without quotes
-                output.write(f'{name},{price},{weight},{price_per_kg}\n')
-            
-            return jsonify({"csv_content": output.getvalue()})
-            
-        elif decoded_url == "https://www.safrans.lv":
-            # Main website URL - do full crawl
-            products = crawl_website(decoded_url)
-        elif "garsvielas_un_garsaugi" in decoded_url:
-            if decoded_url.count('/') >= 5:  # This is a product page URL
-                # Single product page
-                products = scrape_product_page(decoded_url, 'https://www.safrans.lv')
-            else:
-                # This is a category page - get product links and scrape each one
-                logger.info(f"Scraping category page: {decoded_url}")
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-                response = requests.get(decoded_url, headers=headers)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                product_links = get_product_links(soup)
-                if not product_links:
-                    logger.warning(f"No product links found on category page: {decoded_url}")
-                    return jsonify({'error': 'No product links found on this category page'}), 404
-                
-                products = []
-                for product_url in product_links[:10000]:  # Limit to 10 products
-                    product_data = scrape_product_page(product_url, 'https://www.safrans.lv')
-                    products.extend(product_data)
-                    time.sleep(1)  # Be nice to the server
+        # Check which website we're scraping
+        if 'safrans' in url.lower():
+            # Handle Safrans website
+            base_url = "https://www.safrans.lv"
+            products = crawl_website(base_url)
+            return jsonify(products)
+        elif 'garsvielas' in url.lower():
+            # Handle Garsvielas website
+            products = await scrape_garsvielas(url, limit)
+            return jsonify(products)
         else:
-            return jsonify({'error': 'Invalid URL. Please provide a URL from garsvielas.lv or safrans.lv'}), 400
-        
-        if not products:
-            return jsonify({'error': 'No product information could be found'}), 404
-        
-        logger.info(f"Successfully scraped {len(products)} products")
-        
-        # Create CSV content
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["Product Name", "Price (€)", "Weight (g)", "Price per kg (€)"])
-        
-        for product in products:
-            writer.writerow([
-                product["name"],
-                product["price"],
-                product["weight"],
-                product["price_per_kg"]
-            ])
-        
-        return jsonify({"csv_content": output.getvalue()})
-    
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request error: {e}")
-        return jsonify({'error': f'Error making request: {str(e)}'}), 500
+            return jsonify({'error': 'Unsupported website'}), 400
+            
     except Exception as e:
-        logger.error(f"Error scraping website: {e}")
+        logger.error(f"Error in scrape endpoint: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8003) 
+    app.run(host='0.0.0.0', port=8003) 

@@ -8,6 +8,13 @@
         placeholder="Enter URL to scrape"
         class="url-input"
       />
+      <input
+        v-model.number="maxProducts"
+        type="number"
+        min="1"
+        placeholder="Max products"
+        class="max-products-input"
+      />
       <button @click="scrapeProducts" class="scrape-button">
         Scrape Products
       </button>
@@ -53,6 +60,7 @@ export default {
   data() {
     return {
       url: "https://www.garsvielas.lv/gar%C5%A1vielas",
+      maxProducts: 10,
       products: [],
       loading: false,
       error: null,
@@ -66,30 +74,22 @@ export default {
 
       try {
         const response = await fetch(
-          `http://localhost:8003/scrape?url=${encodeURIComponent(this.url)}`
+          `http://localhost:8003/scrape?url=${encodeURIComponent(
+            this.url
+          )}&limit=${this.maxProducts}`
         );
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
 
-        // Parse CSV content
-        const csvContent = data.csv_content;
-        const lines = csvContent.split("\n");
-        const headers = lines[0].split(",");
-
-        for (let i = 1; i < lines.length; i++) {
-          if (lines[i].trim()) {
-            const values = lines[i].split(",");
-            const product = {
-              name: values[0],
-              price: values[1],
-              weight: values[2],
-              pricePerKg: values[3],
-            };
-            this.products.push(product);
-          }
-        }
+        // Process the JSON data directly
+        this.products = data.map((item) => ({
+          name: item.name,
+          price: item.price,
+          weight: item.weight,
+          pricePerKg: item.price_per_kg,
+        }));
       } catch (error) {
         console.error("Error:", error);
         this.error = error.message;
@@ -105,14 +105,14 @@ export default {
         "Price per kg (€)",
       ];
       const csvContent = [
-        headers.join("\t"),
+        headers.join(","),
         ...this.products.map((item) =>
           [
             `"${item.name}"`,
             `"${item.price}"`,
             `"${item.weight}"`,
             `"${item.pricePerKg || "N/A"}"`,
-          ].join("\t")
+          ].join(",")
         ),
       ].join("\n");
 
@@ -142,6 +142,14 @@ export default {
   padding: 0.5rem;
   border: 1px solid #ddd;
   border-radius: 4px;
+}
+
+.max-products-input {
+  width: 120px;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-right: 1rem;
 }
 
 .scrape-button,

@@ -4,6 +4,12 @@ import logging
 import asyncio
 from playwright.async_api import async_playwright
 import re
+from urllib.parse import urljoin
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -65,15 +71,13 @@ def format_price(price: float) -> str:
     except:
         return 'N/A'
 
-async def scrape_garsvielas(url=None):
+async def scrape_garsvielas(url=None, limit=None):
     async with async_playwright() as p:
-        # Launch browser with more lenient settings
         browser = await p.chromium.launch(
-            headless=False,  # Set to False to see what's happening
+            headless=False,
             args=['--disable-http2']
         )
         
-        # Create context with more lenient timeout
         context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080},
             user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -83,171 +87,158 @@ async def scrape_garsvielas(url=None):
         page.set_default_timeout(60000)  # 60 seconds timeout
         
         try:
-            # Use the provided URL or default to the main page
             if url is None:
                 url = "https://www.garsvielas.lv/gar%C5%A1vielas"
             
-            # Validate URL
             if not url.startswith("https://www.garsvielas.lv/"):
                 raise ValueError("Invalid URL. Please provide a URL from garsvielas.lv")
                 
             logger.info(f"Loading page: {url}")
             
-            # Go to the page and wait for it to load
             await page.goto(url)
-            await page.wait_for_load_state('domcontentloaded', timeout=60000)
-            
-            # Wait for the page to stabilize
-            await page.wait_for_timeout(10000)  # Increased wait time
+            await page.wait_for_load_state('domcontentloaded')
+            await page.wait_for_timeout(5000)
             
             # Try to close the popup if it exists
             try:
-                logger.info("Looking for popup close button...")
                 close_button = await page.wait_for_selector("span[class*='close']", timeout=5000)
                 if close_button:
-                    logger.info("Found close button")
                     await close_button.click()
-                    logger.info("Clicked close button")
-                    await page.wait_for_timeout(5000)  # Wait after closing popup
+                    await page.wait_for_timeout(2000)
             except Exception as e:
-                logger.info(f"Error handling popup: {str(e)}")
+                logger.info(f"No popup found or error handling popup: {str(e)}")
+
+            # First, get all product links
+            product_links = await page.evaluate("""() => {
+                const links = Array.from(document.querySelectorAll('a[data-hook="product-item-container"]'));
+                return links.map(link => link.href);
+            }""")
             
-            # Wait for any price element to be visible
-            logger.info("Waiting for prices to load...")
-            try:
-                await page.wait_for_selector('span[data-hook="price-range-from"], span[data-hook="product-item-price-to-pay"]', timeout=30000)
-                logger.info("Prices loaded successfully")
-            except Exception as e:
-                logger.error(f"Error waiting for prices: {str(e)}")
+            # Apply limit if specified
+            if limit and isinstance(limit, int) and limit > 0:
+                product_links = product_links[:limit]
+                logger.info(f"Limited to {limit} products")
             
-            # Try to find product names
-            logger.info("Looking for product names...")
-            product_names = await page.query_selector_all("h3[data-hook='product-item-name']")
-            
-            if not product_names:
-                logger.error("Could not find any products")
-                return []
-            
-            logger.info(f"Found {len(product_names)} products")
+            logger.info(f"Processing {len(product_links)} product links")
             
             results = []
-            for name_elem in product_names:
+            # Visit each product page and get variations
+            for product_url in product_links:
                 try:
-                    # Get product name and extract weight if present
+                    logger.info(f"Processing product page: {product_url}")
+                    
+                    # Navigate to product page
+                    await page.goto(product_url)
+                    await page.wait_for_load_state('domcontentloaded')
+                    await page.wait_for_timeout(2000)
+                    
+                    # Get product name from the product title
+                    name_elem = await page.wait_for_selector('h1[data-hook="product-title"]')
+                    if not name_elem:
+                        name_elem = await page.wait_for_selector('[data-hook="product-item-name"]')
                     name = await name_elem.inner_text()
                     name = name.strip()
+                    logger.info(f"Found product name: {name}")
                     
-                    # Extract weight from name if present
-                    weight_pattern = r'\s+(\d+(?:\.\d+)?(?:g|kg))(?:\s+|$)'
-                    weight_match = re.search(weight_pattern, name)
-                    weight = weight_match.group(1) if weight_match else None
-                    
-                    # Remove weight from name if found
-                    if weight_match:
-                        name = name[:weight_match.start()].strip()
-                    
-                    logger.info(f"Found product name: {name}, weight: {weight}")
-                    
-                    # Find the parent product item
-                    container = await name_elem.evaluate("""node => {
-                        const container = node.closest('[data-hook="product-item-name-and-price-layout"]');
-                        if (!container) {
-                            console.log('Could not find product container');
-                            return null;
-                        }
-                        return container.outerHTML;
-                    }""")
-                    
-                    if not container:
-                        logging.warning(f"Could not find container for product: {name}")
+                    # Find and click the dropdown button
+                    try:
+                        dropdown_button = await page.wait_for_selector('button[data-hook="dropdown-base"]', timeout=5000)
+                        if dropdown_button:
+                            # First, get all weight texts to know what we need to process
+                            await dropdown_button.click()
+                            await page.wait_for_timeout(1000)
+                            
+                            # Get all weight options text first
+                            weight_options = []
+                            menu_items = await page.query_selector_all('div[role="menuitem"]')
+                            for item in menu_items:
+                                weight_span = await item.query_selector('span[class*="ogFb3AX"]')
+                                if weight_span:
+                                    weight_text = await weight_span.inner_text()
+                                    weight_options.append(weight_text)
+                            
+                            logger.info(f"Found weight options: {weight_options}")
+                            
+                            # Close the dropdown
+                            await dropdown_button.click()
+                            await page.wait_for_timeout(1000)
+                            
+                            # Now process each weight option
+                            for weight in weight_options:
+                                try:
+                                    # Open dropdown
+                                    await dropdown_button.click()
+                                    await page.wait_for_timeout(1000)
+                                    
+                                    # Find and click the specific weight option
+                                    option_selector = f'div[role="menuitem"][title="{weight}"]'
+                                    option = await page.wait_for_selector(option_selector)
+                                    if option:
+                                        await option.click()
+                                        await page.wait_for_timeout(1000)
+                                        
+                                        # Get the updated price
+                                        price_elem = await page.wait_for_selector('[data-hook="formatted-primary-price"]')
+                                        price_text = await price_elem.get_attribute('data-wix-price')
+                                        logger.info(f"Found price text: {price_text}")
+                                        
+                                        # Extract numeric price value
+                                        raw_price = clean_price(price_text)
+                                        formatted_price = format_price(raw_price)
+                                        price_per_kg = calculate_price_per_kg(raw_price, weight)
+                                        
+                                        logger.info(f"Found price {formatted_price} for weight {weight}")
+                                        
+                                        # Add product variation
+                                        results.append({
+                                            'name': name,
+                                            'price': formatted_price,
+                                            'weight': weight,
+                                            'price_per_kg': price_per_kg
+                                        })
+                                    
+                                except Exception as e:
+                                    logger.error(f"Error processing weight option: {str(e)}")
+                                    continue
+                                    
+                        else:
+                            # No dropdown - single weight product
+                            price_elem = await page.wait_for_selector('[data-hook="formatted-primary-price"]')
+                            price_text = await price_elem.get_attribute('data-wix-price')
+                            raw_price = clean_price(price_text)
+                            formatted_price = format_price(raw_price)
+                            
+                            # Try to find weight in product name
+                            weight_match = re.search(r'\s+(\d+(?:\.\d+)?(?:g|kg))(?:\s+|$)', name)
+                            weight = weight_match.group(1) if weight_match else 'N/A'
+                            
+                            price_per_kg = calculate_price_per_kg(raw_price, weight)
+                            
+                            results.append({
+                                'name': name,
+                                'price': formatted_price,
+                                'weight': weight,
+                                'price_per_kg': price_per_kg
+                            })
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing product variations: {str(e)}")
                         continue
                         
-                    logging.info(f"Found container for product: {name}")
-                    logging.info(f"Container HTML: {container}")
-                    
-                    # Extract price from the container
-                    price = await page.evaluate("""container => {
-                        try {
-                            // Parse the HTML string into a DOM element
-                            const parser = new DOMParser();
-                            const doc = parser.parseFromString(container, 'text/html');
-                            
-                            // Find the prices container
-                            const pricesContainer = doc.querySelector('[data-hook="prices-container"]');
-                            if (!pricesContainer) {
-                                console.log('Could not find prices container');
-                                console.log('Container HTML:', container);
-                                return null;
-                            }
-                            
-                            // Try to find the price elements
-                            const priceToPay = pricesContainer.querySelector('[data-hook="product-item-price-to-pay"]');
-                            const priceFrom = pricesContainer.querySelector('[data-hook="price-range-from"]');
-                            
-                            // Return the price text, preferring price-to-pay over price-from
-                            if (priceToPay) {
-                                return priceToPay.textContent.trim();
-                            } else if (priceFrom) {
-                                return priceFrom.textContent.trim();
-                            }
-                            
-                            return null;
-                        } catch (error) {
-                            console.error('Error finding price:', error);
-                            return null;
-                        }
-                    }""", container)
-                    
-                    if price:
-                        raw_price = clean_price(price)
-                        formatted_price = format_price(raw_price)
-                        logger.info(f"Found price for {name}: {formatted_price}")
-                        
-                        # Calculate price per kg
-                        price_per_kg = calculate_price_per_kg(raw_price, weight if weight else 'N/A')
-                        logger.info(f"Calculated price per kg: {price_per_kg}")
-                        
-                        # Create product object
-                        product = {
-                            'name': name,
-                            'price': formatted_price,
-                            'weight': weight if weight else 'N/A',
-                            'price_per_kg': price_per_kg
-                        }
-                        results.append(product)
-                    else:
-                        logger.warning(f"No price found for {name}")
                 except Exception as e:
-                    logger.error(f"Error scraping product: {str(e)}")
+                    logger.error(f"Error processing product page: {str(e)}")
+                    continue
             
-            # Print results in a table format
-            print("\nScraped Products:")
-            print("-" * 90)
-            print(f"{'Product Name':<50} {'Price (€)':<10} {'Weight':<10} {'Price/kg':<10}")
-            print("-" * 90)
-            
-            for product in results:
-                name = product['name']
-                price = product['price']
-                weight = product['weight'] if product['weight'] is not None else 'N/A'
-                price_per_kg = product['price_per_kg'] if product['price_per_kg'] is not None else 'N/A'
-                
-                print(f"{name[:50]:<50} {price:<10} {weight:<10} {price_per_kg:<10}")
-            
-            if not results:
-                print("No products were found.")
-                
             # Export to CSV
             export_to_csv(results)
             
-            # Return the results
             return results
+            
         except Exception as e:
             logger.error(f"Error scraping page: {str(e)}")
             return []
         finally:
-            # Add a delay before closing to see the results
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(2000)
             await context.close()
             await browser.close()
 
@@ -272,6 +263,119 @@ def export_to_csv(products: List[Dict[str, str]], filename: str = "garsvielas_pr
         logger.info(f"Successfully exported {len(products)} products to {filename}")
     except Exception as e:
         logger.error(f"Error exporting to CSV: {str(e)}")
+
+def scrape_product_page(url, base_url):
+    """Scrape individual product page"""
+    try:
+        logger.info(f"Scraping product page: {url}")
+        
+        # Make sure URL is absolute
+        full_url = urljoin(base_url, url)
+        
+        # Initialize Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        
+        # Initialize the driver
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(full_url)
+        driver.implicitly_wait(5)  # Set a general implicit wait
+        
+        # Wait for the page to load
+        wait = WebDriverWait(driver, 10)
+        
+        # Find product name
+        name = None
+        try:
+            name_elem = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '[data-hook="product-item-name"]')))
+            name = name_elem.text.strip()
+            logger.info(f"Found product name: {name}")
+        except Exception as e:
+            logger.error(f"Error finding product name: {e}")
+            return []
+
+        products = []
+        try:
+            # Find and click the dropdown button
+            dropdown_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[data-hook="dropdown-base"]')))
+            dropdown_button.click()
+            logger.info("Clicked dropdown button")
+
+            # Wait for dropdown options container
+            options_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="menu"]')))
+            
+            # Find all weight options
+            weight_options = options_container.find_elements(By.CSS_SELECTOR, 'div[role="menuitem"]')
+            logger.info(f"Found {len(weight_options)} weight options")
+
+            for option in weight_options:
+                try:
+                    # Get the weight text
+                    weight_span = option.find_element(By.CSS_SELECTOR, 'span[class*="oGS1fO3"]')
+                    weight_text = weight_span.text.strip()
+                    logger.info(f"Processing weight option: {weight_text}")
+
+                    # Click the weight option
+                    driver.execute_script("arguments[0].click();", option)
+                    logger.info(f"Clicked weight option: {weight_text}")
+
+                    # Wait for price element to be updated
+                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '[data-hook="product-item-price-to-pay"]')))
+                    driver.implicitly_wait(1)  # Short wait for price update
+
+                    # Get the updated price
+                    price_elem = driver.find_element(By.CSS_SELECTOR, '[data-hook="product-item-price-to-pay"]')
+                    price_text = price_elem.text.strip()
+                    logger.info(f"Found price text: {price_text}")
+
+                    # Extract numeric price value
+                    price_match = re.search(r'(\d+[.,]\d+)', price_text)
+                    if price_match:
+                        price = float(price_match.group(1).replace(',', '.'))
+                        logger.info(f"Found price for {weight_text}: {price}")
+
+                        # Format price and calculate price per kg
+                        formatted_price = format_price(price)
+                        price_per_kg = calculate_price_per_kg(price, weight_text)
+
+                        products.append({
+                            "name": name,
+                            "price": formatted_price,
+                            "weight": weight_text,
+                            "price_per_kg": price_per_kg
+                        })
+
+                    # Click the dropdown button again to show options for next iteration
+                    if option != weight_options[-1]:  # If not the last option
+                        dropdown_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[data-hook="dropdown-base"]')))
+                        dropdown_button.click()
+                        logger.info("Reopened dropdown for next option")
+                        # Wait for options to be visible again
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="menu"]')))
+
+                except Exception as e:
+                    logger.error(f"Error processing weight option: {e}")
+                    logger.error(f"Exception details: {str(e)}")
+                    continue
+
+            return products
+
+        except Exception as e:
+            logger.error(f"Error in weight selection process: {e}")
+            logger.error(f"Exception details: {str(e)}")
+            return []
+
+    except Exception as e:
+        logger.error(f"Error scraping product page: {e}")
+        logger.error(f"Exception details: {str(e)}")
+        return []
+    finally:
+        try:
+            driver.quit()
+        except:
+            pass
 
 if __name__ == "__main__":
     try:
