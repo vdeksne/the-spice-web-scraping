@@ -29,27 +29,6 @@ This project is a web scraping application that allows users to scrape product i
 - Automatically processes all available weight options for each product
 - Visual scraping process with browser automation
 
-## Project Structure
-
-```
-.
-├── backend/
-│   ├── app.py                 # Flask backend server
-│   ├── safrans_scraper.py     # Safrans scraping logic
-│   ├── garsvielas_scraper.py  # Garsvielas scraping logic
-│   └── cikade_scraper.py      # Cikade scraping logic
-├── frontend/
-│   ├── src/
-│   │   ├── components/        # Vue components
-│   │   ├── views/            # Vue views
-│   │   ├── router/           # Vue router
-│   │   └── App.vue           # Main Vue component
-│   └── package.json          # Frontend dependencies
-└── README.md                 # Project documentation
-```
-
-## Setup
-
 ### Backend Setup
 
 1. Navigate to the backend directory:
