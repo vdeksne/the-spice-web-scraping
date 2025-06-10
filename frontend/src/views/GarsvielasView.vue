@@ -15,8 +15,8 @@
         placeholder="Max products"
         class="max-products-input"
       />
-      <button @click="scrapeProducts" class="scrape-button">
-        Scrape Products
+      <button @click="scrapeProducts" :disabled="loading" class="scrape-button">
+        {{ loading ? "Scraping..." : "Scrape Products" }}
       </button>
     </div>
 
@@ -73,18 +73,15 @@ export default {
       this.products = [];
 
       try {
-        const response = await fetch(
-          `http://localhost:8003/scrape?url=${encodeURIComponent(
-            this.url
-          )}&limit=${this.maxProducts}&format=json`
-        );
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
+        const response = await axios.get("http://localhost:8001/scrape", {
+          params: {
+            url: this.url,
+            limit: this.maxProducts,
+            format: "json",
+          },
+        });
 
-        // Process the JSON data directly
-        this.products = data.map((item) => ({
+        this.products = response.data.map((item) => ({
           name: item.name,
           price: item.price,
           weight: item.weight,
@@ -92,7 +89,10 @@ export default {
         }));
       } catch (error) {
         console.error("Error:", error);
-        this.error = error.message;
+        this.error =
+          error.response?.data?.message ||
+          error.message ||
+          "Failed to scrape products";
       } finally {
         this.loading = false;
       }
@@ -150,22 +150,32 @@ export default {
   border: 1px solid #ddd;
   border-radius: 4px;
   margin-right: 1rem;
+  display: none;
 }
 
 .scrape-button,
 .download-button {
-  padding: 0.5rem 1rem;
-  background-color: #4a90e2;
-  color: white;
+  padding: 0.75rem 1.5rem;
+  background-color: #ffabd5;
+  color: rgb(0, 0, 0);
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.3s;
+  transition: all 0.3s;
+  font-weight: 500;
+  font-size: 1rem;
 }
 
 .scrape-button:hover,
 .download-button:hover {
-  background-color: #357abd;
+  background-color: #ffabd5;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.scrape-button:active,
+.download-button:active {
+  transform: translateY(0);
 }
 
 .loading {

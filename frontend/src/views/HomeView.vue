@@ -66,31 +66,25 @@ export default {
 
       try {
         const response = await fetch(
-          `http://localhost:8003/scrape?url=${encodeURIComponent(
+          `http://localhost:8001/scrape?url=${encodeURIComponent(
             this.url
-          )}&format=csv`
+          )}&format=json`
         );
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
 
-        // Parse CSV content
-        const csvContent = data.csv_content;
-        const lines = csvContent.split("\n");
-        const headers = lines[0].split(",");
-
-        for (let i = 1; i < lines.length; i++) {
-          if (lines[i].trim()) {
-            const values = lines[i].split(",");
-            const product = {
-              name: values[0],
-              price: values[1],
-              weight: values[2],
-              price_per_kg: values[3],
-            };
-            this.products.push(product);
-          }
+        // Handle the products data
+        if (Array.isArray(data)) {
+          this.products = data.map((product) => ({
+            name: product.name || "",
+            price: product.price || "N/A",
+            weight: product.weight || "N/A",
+            price_per_kg: product.price_per_kg || "N/A",
+          }));
+        } else {
+          throw new Error("Invalid response format");
         }
       } catch (error) {
         console.error("Error:", error);
@@ -129,6 +123,8 @@ export default {
 </script>
 
 <style scoped>
+@import url("https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap");
+
 .view-container {
   padding: 2rem;
 }
@@ -145,21 +141,29 @@ export default {
   border: 1px solid #ddd;
   border-radius: 4px;
 }
-
 .scrape-button,
 .download-button {
-  padding: 0.5rem 1rem;
-  background-color: #4a90e2;
-  color: white;
+  padding: 0.75rem 1.5rem;
+  background-color: #ffabd5;
+  color: rgb(0, 0, 0);
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.3s;
+  transition: all 0.3s;
+  font-weight: 500;
+  font-size: 1rem;
 }
 
 .scrape-button:hover,
 .download-button:hover {
-  background-color: #357abd;
+  background-color: #ffabd5;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.scrape-button:active,
+.download-button:active {
+  transform: translateY(0);
 }
 
 .loading {

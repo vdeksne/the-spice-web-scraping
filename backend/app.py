@@ -20,6 +20,9 @@ app = Flask(__name__)
 # Enable CORS
 CORS(app)
 
+# Global variable to track progress
+scraping_progress = 0
+
 def get_category_links(soup):
     """Extract category links with class 'dator'"""
     links = []
@@ -254,6 +257,9 @@ def crawl_website(base_url):
 
 @app.route('/scrape', methods=['GET'])
 def scrape_website():
+    global scraping_progress
+    scraping_progress = 0  # Reset progress at the start
+    
     try:
         url = request.args.get('url')
         format_type = request.args.get('format', 'csv')  # Default to CSV format
@@ -300,8 +306,8 @@ def scrape_website():
                     weight = weight.replace('"', '').replace('\\', '').replace(',', ' ')
                     price_per_kg = price_per_kg.replace('"', '').replace('\\', '').replace(',', ' ')
                     
-                    # Write row manually without quotes
-                    output.write(f'{name},{price},{weight},{price_per_kg}\n')
+                    # Write the line without quotes
+                    output.write(f"{name},{price},{weight},{price_per_kg}\n")
                 
                 return jsonify({"csv_content": output.getvalue()})
             
@@ -318,21 +324,29 @@ def scrape_website():
             
             # Return format based on request
             if format_type == 'json':
-                # Return raw JSON data
+                # Return raw JSON data for CikadeView
                 return jsonify(products)
             else:
-                # Create CSV content
+                # Create CSV content with proper formatting
                 output = StringIO()
-                writer = csv.writer(output)
-                writer.writerow(["Product Name", "Price (€)", "Weight (g)", "Price per kg (€)"])
+                # Write headers manually without quotes
+                output.write('Product Name,Price (€),Weight (g),Price per kg (€)\n')
                 
+                # Write data manually without quotes
                 for product in products:
-                    writer.writerow([
-                        product["name"],
-                        product["price"],
-                        product["weight"],
-                        product["price_per_kg"]
-                    ])
+                    name = product['name'].strip() if product['name'] else ''
+                    price = product['price'].strip() if product['price'] else 'N/A'
+                    weight = product['weight'].strip() if product['weight'] else 'N/A'
+                    price_per_kg = product['price_per_kg'].strip() if product['price_per_kg'] else 'N/A'
+                    
+                    # Remove any existing quotes or backslashes
+                    name = name.replace('"', '').replace('\\', '').replace(',', ' ')
+                    price = price.replace('"', '').replace('\\', '').replace(',', ' ')
+                    weight = weight.replace('"', '').replace('\\', '').replace(',', ' ')
+                    price_per_kg = price_per_kg.replace('"', '').replace('\\', '').replace(',', ' ')
+                    
+                    # Write the line without quotes
+                    output.write(f"{name},{price},{weight},{price_per_kg}\n")
                 
                 return jsonify({"csv_content": output.getvalue()})
             
@@ -400,6 +414,21 @@ def scrape_website():
     except Exception as e:
         logger.error(f"Error scraping website: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/progress', methods=['GET'])
+def get_progress():
+    """Return the current scraping progress as a percentage"""
+    return jsonify({"progress": scraping_progress})
+
+@app.route('/update_progress', methods=['GET'])
+def update_progress():
+    """Update the current scraping progress"""
+    global scraping_progress
+    progress = request.args.get('progress', type=int)
+    if progress is not None:
+        scraping_progress = progress
+        logger.info(f"Progress updated to {progress}%")
+    return jsonify({"status": "success"})
 
 if __name__ == "__main__":
     app.run(debug=True, port=8003) 

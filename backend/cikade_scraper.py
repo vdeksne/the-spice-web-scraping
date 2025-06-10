@@ -3,10 +3,19 @@ import logging
 import re
 from typing import List, Dict, Optional
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+import requests
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Function to update progress
+def update_progress(progress):
+    """Update the global progress variable in app.py"""
+    try:
+        requests.get(f"http://localhost:8003/update_progress?progress={progress}")
+    except Exception as e:
+        logger.error(f"Error updating progress: {e}")
 
 async def extract_price_per_kg(price: float, weight_text: str) -> str:
     """Calculate price per kg if possible."""
@@ -200,6 +209,14 @@ async def scrape_cikade(url: str = "https://cikade.lv/product-category/garsviela
                 product_links = product_links[:limit]
                 logger.info(f"Limited to {limit} products")
             
+            # Calculate total steps for progress tracking
+            total_products = len(product_links)
+            total_steps = total_products
+            current_step = 0
+            
+            # Update initial progress
+            update_progress(0)
+            
             # Process each product
             for i, product_url in enumerate(product_links):
                 try:
@@ -218,6 +235,10 @@ async def scrape_cikade(url: str = "https://cikade.lv/product-category/garsviela
                         await page.goto(url)
                         await page.wait_for_load_state('domcontentloaded')
                         await page.wait_for_timeout(3000)
+                        current_step += 1
+                        # Update progress
+                        progress_percent = int((current_step / total_steps) * 100)
+                        update_progress(progress_percent)
                         continue
                     
                     # Check if there's a weight dropdown
@@ -226,78 +247,241 @@ async def scrape_cikade(url: str = "https://cikade.lv/product-category/garsviela
                     if weight_options:
                         logger.info(f"Found {len(weight_options)} weight options for {name}")
                         
+                        # Update total steps to include weight options
+                        total_steps += len(weight_options) - 1  # Subtract 1 because we already counted the product
+                        
                         # Process each weight option
                         for j, weight in enumerate(weight_options):
                             try:
                                 logger.info(f"Processing weight option {j+1}/{len(weight_options)}: {weight} for {name}")
                                 
+                                # Check if this is the last weight option
+                                is_last_weight = (j == len(weight_options) - 1)
+                                
                                 # Select weight option
                                 if not await select_weight_option(page, weight):
                                     logger.warning(f"Failed to select weight option {weight}, skipping")
+                                    current_step += 1
+                                    # Update progress
+                                    progress_percent = int((current_step / total_steps) * 100)
+                                    update_progress(progress_percent)
                                     continue
                                 
-                                await page.wait_for_timeout(2000)  # Wait for dropdown to update
+                                await page.wait_for_timeout(500)  # Reduced wait time
                                 
-                                # Add to cart
-                                if not await add_to_cart(page):
-                                    logger.warning(f"Failed to add product to cart, skipping")
-                                    continue
-                                
-                                await page.wait_for_timeout(3000)  # Wait for cart to update
-                                
-                                # View cart
-                                if not await view_cart(page):
-                                    logger.warning(f"Failed to view cart, skipping")
-                                    continue
-                                
-                                await page.wait_for_load_state('domcontentloaded')
-                                await page.wait_for_timeout(3000)  # Wait for cart page to load
-                                
-                                # Extract cart data
-                                cart_data = await extract_cart_data(page)
-                                if cart_data:
-                                    # Calculate price per kg
-                                    price = cart_data.get('price')
-                                    if price is not None:
-                                        price_per_kg = await extract_price_per_kg(price, weight)
+                                # For the last weight option, try to get price directly without cart interaction
+                                if is_last_weight:
+                                    try:
+                                        logger.info(f"Last weight option, trying to get price directly without cart interaction")
                                         
-                                        products.append({
-                                            "name": name,
-                                            "price": cart_data["price"],
-                                            "weight": weight,
-                                            "price_per_kg": price_per_kg
-                                        })
+                                        # Get the weight text from the dropdown first
+                                        weight_text = await page.evaluate("""() => {
+                                            const select = document.getElementById('svars');
+                                            if (!select) return null;
+                                            
+                                            const selectedOption = select.options[select.selectedIndex];
+                                            return selectedOption ? selectedOption.text : null;
+                                        }""")
                                         
-                                        logger.info(f"Added product: {name} - {weight} - {cart_data['price']}€ - {price_per_kg}€/kg")
+                                        if not weight_text:
+                                            logger.warning(f"Could not get weight text from dropdown, falling back to cart method")
+                                            # Fall back to cart method
+                                            price_text = None
+                                        else:
+                                            # Try to get price directly from the product page with more specific selectors
+                                            price_text = await page.evaluate("""() => {
+                                                // Try multiple selectors to find the price
+                                                const selectors = [
+                                                    'p.price span.amount',
+                                                    'p.price .woocommerce-Price-amount',
+                                                    '.price .amount',
+                                                    '.summary .price .amount',
+                                                    'span.price .amount',
+                                                    'span.price .woocommerce-Price-amount'
+                                                ];
+                                                
+                                                for (const selector of selectors) {
+                                                    const priceElem = document.querySelector(selector);
+                                                    if (priceElem) {
+                                                        return priceElem.textContent.trim();
+                                                    }
+                                                }
+                                                
+                                                return null;
+                                            }""")
+                                            
+                                            if price_text:
+                                                # Extract numeric price with improved regex
+                                                price_match = re.search(r'(\d+[.,]\d+)', price_text)
+                                                if price_match:
+                                                    price = float(price_match.group(1).replace(',', '.'))
+                                                    formatted_price = await format_price(price)
+                                                    price_per_kg = await extract_price_per_kg(price, weight_text)
+                                                    
+                                                    products.append({
+                                                        "name": name,
+                                                        "price": formatted_price,
+                                                        "weight": weight_text,
+                                                        "price_per_kg": price_per_kg
+                                                    })
+                                                    
+                                                    logger.info(f"Added last product directly: {name} - {weight_text} - {formatted_price}€ - {price_per_kg}€/kg")
+                                                    
+                                                    # Go directly to category page
+                                                    logger.info(f"Going directly to category page after last weight option")
+                                                    await page.goto(url, timeout=5000)
+                                                    await page.wait_for_load_state('domcontentloaded')
+                                                    current_step += 1
+                                                    # Update progress
+                                                    progress_percent = int((current_step / total_steps) * 100)
+                                                    update_progress(progress_percent)
+                                                    break
+                                                else:
+                                                    logger.warning(f"Could not extract price from text: {price_text}, falling back to cart method")
+                                            else:
+                                                logger.warning(f"Could not find price element, falling back to cart method")
+                                    except Exception as e:
+                                        logger.error(f"Error getting price directly for last weight option: {e}")
+                                        # Fall back to cart method if direct method fails
+                                        logger.info(f"Falling back to cart method for last weight option")
+                                        price_text = None
+                                        weight_text = None
                                 
-                                # Remove from cart
-                                if not await remove_from_cart(page):
-                                    logger.warning(f"Failed to remove product from cart")
-                                
-                                await page.wait_for_timeout(3000)  # Wait for cart to update
-                                
-                                # Go back to the product page for the next weight option
-                                await page.goto(product_url)
-                                await page.wait_for_load_state('domcontentloaded')
-                                await page.wait_for_timeout(3000)  # Wait for page to fully load
+                                # If not the last weight option or direct method failed, use cart method
+                                if not is_last_weight or not price_text or not weight_text:
+                                    # Add to cart
+                                    if not await add_to_cart(page):
+                                        logger.warning(f"Failed to add product to cart, skipping")
+                                        current_step += 1
+                                        # Update progress
+                                        progress_percent = int((current_step / total_steps) * 100)
+                                        update_progress(progress_percent)
+                                        continue
+                                    
+                                    await page.wait_for_timeout(1000)  # Wait for cart to update
+                                    
+                                    # View cart
+                                    if not await view_cart(page):
+                                        logger.warning(f"Failed to view cart, skipping")
+                                        current_step += 1
+                                        # Update progress
+                                        progress_percent = int((current_step / total_steps) * 100)
+                                        update_progress(progress_percent)
+                                        continue
+                                    
+                                    await page.wait_for_load_state('domcontentloaded')
+                                    await page.wait_for_timeout(1000)  # Wait for cart page to load
+                                    
+                                    # Extract cart data
+                                    cart_data = await extract_cart_data(page)
+                                    if cart_data:
+                                        # Calculate price per kg
+                                        price = cart_data.get('price')
+                                        if price is not None:
+                                            # Get the weight text from the dropdown for accurate weight information
+                                            weight_text = await page.evaluate("""() => {
+                                                const select = document.getElementById('svars');
+                                                if (!select) return null;
+                                                
+                                                const selectedOption = select.options[select.selectedIndex];
+                                                return selectedOption ? selectedOption.text : null;
+                                            }""")
+                                            
+                                            # Use the weight from the dropdown if available, otherwise use the weight parameter
+                                            weight_to_use = weight_text if weight_text else weight
+                                            price_per_kg = await extract_price_per_kg(price, weight_to_use)
+                                            
+                                            products.append({
+                                                "name": name,
+                                                "price": cart_data["price"],
+                                                "weight": weight_to_use,
+                                                "price_per_kg": price_per_kg
+                                            })
+                                            
+                                            logger.info(f"Added product: {name} - {weight_to_use} - {cart_data['price']}€ - {price_per_kg}€/kg")
+                                    
+                                    # Remove from cart - ensure this happens for every product
+                                    logger.info("Removing product from cart")
+                                    try:
+                                        # Try multiple times to remove the product
+                                        for attempt in range(3):
+                                            try:
+                                                await page.click('td.product-remove a.remove')
+                                                logger.info("Successfully clicked remove button")
+                                                await page.wait_for_timeout(1000)  # Wait for removal to complete
+                                                break
+                                            except Exception as e:
+                                                logger.warning(f"Attempt {attempt+1} to remove product failed: {e}")
+                                                if attempt == 2:  # Last attempt
+                                                    logger.error("All attempts to remove product failed")
+                                                
+                                        # Verify the product was removed
+                                        cart_empty = await page.evaluate("""() => {
+                                            return document.querySelector('td.product-remove a.remove') === null;
+                                        }""")
+                                        
+                                        if cart_empty:
+                                            logger.info("Product successfully removed from cart")
+                                        else:
+                                            logger.warning("Product may not have been fully removed from cart")
+                                    except Exception as e:
+                                        logger.error(f"Error removing product from cart: {e}")
+                                    
+                                    await page.wait_for_timeout(1000)  # Wait after removal
+                                    
+                                    # If this is not the last weight option, go back to product page
+                                    if not is_last_weight:
+                                        # Go back to the product page for the next weight option
+                                        await page.goto(product_url)
+                                        await page.wait_for_load_state('domcontentloaded')
+                                        await page.wait_for_timeout(1000)  # Wait for page to load
+                                    else:
+                                        # This is the last weight option, go directly to category page
+                                        logger.info(f"Going directly to category page after last weight option")
+                                        await page.goto(url, timeout=5000)
+                                        await page.wait_for_load_state('domcontentloaded')
+                                        current_step += 1
+                                        # Update progress
+                                        progress_percent = int((current_step / total_steps) * 100)
+                                        update_progress(progress_percent)
+                                        break
                                 
                             except Exception as e:
                                 logger.error(f"Error processing weight option {weight}: {e}")
-                                # Try to go back to the product page
-                                try:
-                                    await page.goto(product_url)
+                                # If this is the last weight option, go to category page
+                                if j == len(weight_options) - 1:
+                                    logger.info("Error on last weight option, going to category page")
+                                    await page.goto(url, timeout=5000)
                                     await page.wait_for_load_state('domcontentloaded')
-                                    await page.wait_for_timeout(3000)
-                                except:
-                                    pass
+                                    current_step += 1
+                                    # Update progress
+                                    progress_percent = int((current_step / total_steps) * 100)
+                                    update_progress(progress_percent)
+                                    break
+                                else:
+                                    # Try to go back to the product page for the next weight option
+                                    try:
+                                        await page.goto(product_url)
+                                        await page.wait_for_load_state('domcontentloaded')
+                                        await page.wait_for_timeout(500)  # Reduced wait time
+                                    except:
+                                        # If we can't go back to product page, go to category page
+                                        logger.warning("Failed to return to product page, going to category page")
+                                        await page.goto(url)
+                                        await page.wait_for_load_state('domcontentloaded')
+                                        await page.wait_for_timeout(100)  # Minimal wait time
+                                current_step += 1
+                                # Update progress
+                                progress_percent = int((current_step / total_steps) * 100)
+                                update_progress(progress_percent)
                                 continue
                         
-                        # After processing all weight options, go back to the category page
-                        logger.info(f"Finished processing all weight options for {name}, returning to category page")
-                        await page.goto(url)
-                        await page.wait_for_load_state('domcontentloaded')
-                        await page.wait_for_timeout(3000)  # Wait for page to fully load
-                        
+                        # After processing all weight options, ensure we're on the category page
+                        # This is a safety check in case we didn't break out of the loop earlier
+                        if url not in page.url:
+                            logger.info(f"Ensuring we're on the category page after processing {name}")
+                            await page.goto(url, timeout=5000)
+                            await page.wait_for_load_state('domcontentloaded')
                     else:
                         # No weight options, just get the product price
                         try:
@@ -316,14 +500,8 @@ async def scrape_cikade(url: str = "https://cikade.lv/product-category/garsviela
                                     price = float(price_match.group(1).replace(',', '.'))
                                     formatted_price = await format_price(price)
                                     
-                                    # Get weight from product description or title
-                                    weight_text = await page.evaluate("""() => {
-                                        const descElem = document.querySelector('.woocommerce-product-details__short-description');
-                                        return descElem ? descElem.textContent.trim() : '';
-                                    }""")
-                                    
-                                    # Try to extract weight from description
-                                    weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(g|kg)', weight_text.lower())
+                                    # Extract weight from product title
+                                    weight_match = re.search(r'(\d+(?:[.,]\d+)?)\s*(g|kg)', name.lower())
                                     weight = weight_match.group(0) if weight_match else "N/A"
                                     
                                     # Calculate price per kg
@@ -353,7 +531,11 @@ async def scrape_cikade(url: str = "https://cikade.lv/product-category/garsviela
                                 await page.wait_for_timeout(3000)
                             except:
                                 pass
-                            continue
+                    
+                    current_step += 1
+                    # Update progress
+                    progress_percent = int((current_step / total_steps) * 100)
+                    update_progress(progress_percent)
                     
                 except Exception as e:
                     logger.error(f"Error processing product {product_url}: {e}")
@@ -364,12 +546,19 @@ async def scrape_cikade(url: str = "https://cikade.lv/product-category/garsviela
                         await page.wait_for_timeout(3000)
                     except:
                         pass
+                    current_step += 1
+                    # Update progress
+                    progress_percent = int((current_step / total_steps) * 100)
+                    update_progress(progress_percent)
                     continue
             
             await browser.close()
             
     except Exception as e:
         logger.error(f"Error in Cikade scraper: {e}")
+    
+    # Update final progress to 100%
+    update_progress(100)
     
     logger.info(f"Finished scraping. Found {len(products)} products")
     return products

@@ -1,4 +1,5 @@
 <template>
+  <img src="../assets/paxio_transparent.png" alt="logo" class="logo" />
   <nav class="navbar">
     <div class="navbar-brand"></div>
 
@@ -24,8 +25,6 @@ export default {
 
 <style scoped>
 .navbar {
-  background-color: #ffffff;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   padding: 1rem 2rem;
   display: flex;
   justify-content: space-between;
@@ -40,7 +39,7 @@ export default {
 }
 
 .logo {
-  height: 40px;
+  height: 10rem;
   width: auto;
 }
 
@@ -65,13 +64,21 @@ export default {
 }
 
 .navbar-item:hover {
-  background-color: #f5f5f5;
-  color: #4a90e2;
+  background-color: #db83af;
+  color: #090a10;
 }
 
 .router-link-active {
-  color: #4a90e2;
+  color: #090a10;
   font-weight: bold;
-  background-color: rgba(74, 144, 226, 0.1);
+  background-color: #ffabd5;
+}
+
+@media (max-width: 500px) {
+  .navbar-start {
+    display: flex;
+    gap: 1.5rem;
+    flex-direction: column;
+  }
 }
 </style>

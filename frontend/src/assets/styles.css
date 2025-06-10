@@ -39,15 +39,15 @@ h2 {
 
 .url-input:focus {
   outline: none;
-  border-color: #4a90e2;
+  border-color: #ffabd5;
   box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
 }
 
 .scrape-button,
 .download-button {
   padding: 0.75rem 1.5rem;
-  background-color: #4a90e2;
-  color: white;
+  background-color: #ffabd5;
+  color: rgb(0, 0, 0);
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -58,7 +58,7 @@ h2 {
 
 .scrape-button:hover,
 .download-button:hover {
-  background-color: #357abd;
+  background-color: #ffabd5;
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }

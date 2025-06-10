@@ -1,5 +1,7 @@
 # Web Scraping Project
 
+![Paxio](frontend/src/assets/paxio.png)
+
 This project is a web scraping application that allows users to scrape product information from various e-commerce websites. The application consists of a frontend built with Vue.js and a backend built with Flask.
 
 ## Features

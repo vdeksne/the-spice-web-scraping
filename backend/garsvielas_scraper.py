@@ -71,7 +71,7 @@ def format_price(price: float) -> str:
     except:
         return 'N/A'
 
-async def scrape_garsvielas(url=None, limit=None):
+async def scrape_garsvielas(url=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False,
@@ -114,17 +114,15 @@ async def scrape_garsvielas(url=None, limit=None):
                 return links.map(link => link.href);
             }""")
             
-            # Apply limit if specified
-            if limit and isinstance(limit, int) and limit > 0:
-                product_links = product_links[:limit]
-                logger.info(f"Limited to {limit} products")
-            
-            logger.info(f"Processing {len(product_links)} product links")
+            logger.info(f"Processing all {len(product_links)} product links")
             
             results = []
             # Visit each product page and get variations
-            for product_url in product_links:
+            for index, product_url in enumerate(product_links):
                 try:
+                    # Calculate and log progress percentage
+                    progress_percentage = int((index / len(product_links)) * 100)
+                    logger.info(f"Progress: {progress_percentage}% - Processing product {index+1} of {len(product_links)}")
                     logger.info(f"Processing product page: {product_url}")
                     
                     # Navigate to product page
@@ -203,16 +201,51 @@ async def scrape_garsvielas(url=None, limit=None):
                                     
                         else:
                             # No dropdown - single weight product
-                            price_elem = await page.wait_for_selector('[data-hook="formatted-primary-price"]')
-                            price_text = await price_elem.get_attribute('data-wix-price')
-                            raw_price = clean_price(price_text)
-                            formatted_price = format_price(raw_price)
-                            
                             # Try to find weight in product name
                             weight_match = re.search(r'\s+(\d+(?:\.\d+)?(?:g|kg))(?:\s+|$)', name)
                             weight = weight_match.group(1) if weight_match else 'N/A'
                             
+                            # Get the price from the product-item-price-to-pay element
+                            try:
+                                price_elem = await page.wait_for_selector('[data-hook="product-item-price-to-pay"]')
+                                price_text = await price_elem.get_attribute('data-wix-price')
+                                logger.info(f"Found price text for single weight product: {price_text}")
+                                
+                                raw_price = clean_price(price_text)
+                                formatted_price = format_price(raw_price)
+                                price_per_kg = calculate_price_per_kg(raw_price, weight)
+                                
+                                logger.info(f"Found price {formatted_price} for weight {weight}")
+                                
+                                results.append({
+                                    'name': name,
+                                    'price': formatted_price,
+                                    'weight': weight,
+                                    'price_per_kg': price_per_kg
+                                })
+                            except Exception as e:
+                                logger.error(f"Error processing single weight product: {str(e)}")
+                                continue
+                            
+                    except Exception as e:
+                        # If dropdown button not found, try to process as single weight product
+                        logger.info(f"No dropdown button found, processing as single weight product")
+                        
+                        # Try to find weight in product name
+                        weight_match = re.search(r'\s+(\d+(?:\.\d+)?(?:g|kg))(?:\s+|$)', name)
+                        weight = weight_match.group(1) if weight_match else 'N/A'
+                        
+                        # Get the price from the product-item-price-to-pay element
+                        try:
+                            price_elem = await page.wait_for_selector('[data-hook="product-item-price-to-pay"]')
+                            price_text = await price_elem.get_attribute('data-wix-price')
+                            logger.info(f"Found price text for single weight product: {price_text}")
+                            
+                            raw_price = clean_price(price_text)
+                            formatted_price = format_price(raw_price)
                             price_per_kg = calculate_price_per_kg(raw_price, weight)
+                            
+                            logger.info(f"Found price {formatted_price} for weight {weight}")
                             
                             results.append({
                                 'name': name,
@@ -220,14 +253,16 @@ async def scrape_garsvielas(url=None, limit=None):
                                 'weight': weight,
                                 'price_per_kg': price_per_kg
                             })
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing product variations: {str(e)}")
-                        continue
+                        except Exception as e:
+                            logger.error(f"Error processing single weight product: {str(e)}")
+                            continue
                         
                 except Exception as e:
                     logger.error(f"Error processing product page: {str(e)}")
                     continue
+            
+            # Log final progress
+            logger.info(f"Progress: 100% - Completed scraping {len(product_links)} products")
             
             # Export to CSV
             export_to_csv(results)

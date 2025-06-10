@@ -8,6 +8,16 @@ import re
 import logging
 from urllib.parse import urljoin, unquote
 import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+import platform
+import os
+import traceback
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -196,61 +206,247 @@ def crawl_website(base_url):
         logger.error(f"Error crawling website: {e}")
         return []
 
+def get_chrome_driver():
+    try:
+        logger.info("Setting up Chrome WebDriver...")
+        chrome_options = Options()
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        
+        # For Mac ARM64
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            logger.info("Detected Mac ARM64 system")
+            chrome_options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            # Use the system ChromeDriver
+            driver_path = "/opt/homebrew/bin/chromedriver"  # Updated path for Homebrew installation
+            if not os.path.exists(driver_path):
+                logger.error(f"ChromeDriver not found at {driver_path}")
+                raise Exception(f"ChromeDriver not found at {driver_path}")
+        else:
+            driver_path = "chromedriver"
+        
+        logger.info(f"Using ChromeDriver at: {driver_path}")
+        service = Service(executable_path=driver_path)
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        logger.info("Chrome WebDriver setup successful")
+        return driver
+    except Exception as e:
+        logger.error(f"Error setting up Chrome WebDriver: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
+
+def scrape_garsvielas_page(url: str, limit: int = 10):
+    logger.info(f"Scraping garsvielas.lv page: {url}")
+    driver = None
+    try:
+        driver = get_chrome_driver()
+        logger.info("Loading page...")
+        driver.get(url)
+        
+        # Wait for the page to load
+        logger.info("Waiting for page to load...")
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        
+        # Get the page source after JavaScript execution
+        logger.info("Getting page source...")
+        page_source = driver.page_source
+        logger.info("Page HTML structure:")
+        logger.info(page_source[:1000])  # Log first 1000 chars for debugging
+        
+        soup = BeautifulSoup(page_source, 'html.parser')
+        
+        # Try different selectors for product items
+        selectors = [
+            "div.product-item-info",
+            "div.product-item",
+            "div.product",
+            "div.item",
+            "li.product-item",
+            "div.product-item-wrapper",
+            "div[data-testid='product-item']",
+            "div[data-testid='product']",
+            "div[class*='product']",  # Any div with 'product' in class name
+            "div[class*='item']"      # Any div with 'item' in class name
+        ]
+        
+        products = []
+        for selector in selectors:
+            logger.info(f"Trying selector: {selector}")
+            items = soup.select(selector)
+            logger.info(f"Found {len(items)} items with selector {selector}")
+            
+            if items:
+                for item in items[:limit]:
+                    try:
+                        # Try different selectors for product name
+                        name = None
+                        name_selectors = [
+                            "h3.product-name",
+                            "div.product-name",
+                            "span.product-name",
+                            "h2.product-title",
+                            "div.product-title",
+                            "[data-testid='product-name']",
+                            "[data-testid='product-title']",
+                            "h3", "h2", "h4",  # Try any heading
+                            "span[class*='name']",  # Any span with 'name' in class
+                            "div[class*='name']"    # Any div with 'name' in class
+                        ]
+                        for name_selector in name_selectors:
+                            name_elem = item.select_one(name_selector)
+                            if name_elem:
+                                name = name_elem.text.strip()
+                                break
+                        
+                        if not name:
+                            continue
+                            
+                        # Try different selectors for price
+                        price = None
+                        price_selectors = [
+                            "span.price",
+                            "div.price",
+                            "span.product-price",
+                            "div.product-price",
+                            "[data-testid='product-price']",
+                            "span[class*='price']",  # Any span with 'price' in class
+                            "div[class*='price']"    # Any div with 'price' in class
+                        ]
+                        for price_selector in price_selectors:
+                            price_elem = item.select_one(price_selector)
+                            if price_elem:
+                                price = price_elem.text.strip()
+                                break
+                        
+                        if not price:
+                            continue
+                            
+                        # Try different selectors for weight
+                        weight = None
+                        weight_selectors = [
+                            "span.weight",
+                            "div.weight",
+                            "span.product-weight",
+                            "div.product-weight",
+                            "[data-testid='product-weight']",
+                            "span[class*='weight']",  # Any span with 'weight' in class
+                            "div[class*='weight']"    # Any div with 'weight' in class
+                        ]
+                        for weight_selector in weight_selectors:
+                            weight_elem = item.select_one(weight_selector)
+                            if weight_elem:
+                                weight = weight_elem.text.strip()
+                                break
+                        
+                        if not weight:
+                            continue
+                            
+                        products.append({
+                            "name": name,
+                            "price": price,
+                            "weight": weight
+                        })
+                        logger.info(f"Found product: {name} - {price} - {weight}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing product item: {str(e)}")
+                        logger.error(traceback.format_exc())
+                        continue
+                
+                if products:
+                    break
+        
+        if not products:
+            # Log all div elements with classes for debugging
+            logger.info("All div elements with classes:")
+            for div in soup.find_all('div', class_=True):
+                logger.info(f"Div class: {div['class']}")
+            
+            logger.warning(f"No products found on page: {url}")
+            raise HTTPException(status_code=404, detail="No products found")
+            
+        return products
+        
+    except Exception as e:
+        logger.error(f"Error scraping garsvielas.lv page: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception as e:
+                logger.error(f"Error closing Chrome WebDriver: {str(e)}")
+
 @app.get("/scrape")
-async def scrape_website(url: str = Query(..., description="URL to scrape")):
+async def scrape_website(url: str = Query(..., description="URL to scrape"), format: str = Query("json", description="Response format (json or csv)")):
     try:
         logger.info(f"Starting scrape of website: {url}")
         
         # Determine URL type and handle accordingly
-        if url == "https://www.safrans.lv":
-            # Main website URL - do full crawl
-            products = crawl_website(url)
-        elif "garsvielas_un_garsaugi" in url:
-            if url.count('/') >= 5:  # This is a product page URL
-                # Single product page
-                products = scrape_product_page(url, 'https://www.safrans.lv')
-            else:
-                # This is a category page - get product links and scrape each one
-                logger.info(f"Scraping category page: {url}")
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-                response = requests.get(url, headers=headers)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                product_links = get_product_links(soup)
-                if not product_links:
-                    logger.warning(f"No product links found on category page: {url}")
-                    raise HTTPException(status_code=404, detail="No product links found on this category page")
-                
-                products = []
-                for product_url in product_links[:10000]:  # Limit to 10 products
-                    product_data = scrape_product_page(product_url, 'https://www.safrans.lv')
-                    products.extend(product_data)
-                    time.sleep(1)  # Be nice to the server
+        if "safrans.lv" in url:
+            if url == "https://www.safrans.lv":
+                # Main website URL - do full crawl
+                products = crawl_website(url)
+            elif "garsvielas_un_garsaugi" in url:
+                if url.count('/') >= 5:  # This is a product page URL
+                    # Single product page
+                    products = scrape_product_page(url, 'https://www.safrans.lv')
+                else:
+                    # This is a category page - get product links and scrape each one
+                    logger.info(f"Scraping category page: {url}")
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                    response = requests.get(url, headers=headers)
+                    response.raise_for_status()
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    product_links = get_product_links(soup)
+                    if not product_links:
+                        logger.warning(f"No product links found on category page: {url}")
+                        raise HTTPException(status_code=404, detail="No product links found on this category page")
+                    
+                    products = []
+                    for product_url in product_links[:10000]:  # Limit to 10 products
+                        product_data = scrape_product_page(product_url, 'https://www.safrans.lv')
+                        products.extend(product_data)
+                        time.sleep(1)  # Be nice to the server
+        elif "garsvielas.lv" in url:
+            # Handle garsvielas.lv URLs
+            products = scrape_garsvielas_page(url)
         else:
-            raise HTTPException(status_code=400, detail="Invalid URL. Please provide either the main Safrans website URL or a product/category URL")
+            raise HTTPException(status_code=400, detail="Invalid URL. Please provide a URL from safrans.lv or garsvielas.lv")
         
         if not products:
             raise HTTPException(status_code=404, detail="No product information could be found")
         
         logger.info(f"Successfully scraped {len(products)} products")
         
-        # Create CSV content
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["Product Name", "Price", "Weight", "Price per kg"])
-        
-        for product in products:
-            writer.writerow([
-                product["name"],
-                product["price"],
-                product["weight"],
-                product["price_per_kg"]
-            ])
-        
-        return {"csv_content": output.getvalue()}
+        if format.lower() == "csv":
+            # Create CSV content
+            output = StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["Product Name", "Price", "Weight", "Price per kg"])
+            
+            for product in products:
+                writer.writerow([
+                    product["name"],
+                    product["price"],
+                    product["weight"],
+                    product.get("price_per_kg", "N/A")
+                ])
+            
+            return {"csv_content": output.getvalue()}
+        else:
+            # Return JSON format
+            return products
     
     except requests.exceptions.RequestException as e:
         logger.error(f"Request error: {e}")

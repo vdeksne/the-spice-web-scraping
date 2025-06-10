@@ -1,5 +1,7 @@
-fastapi==0.115.12
-uvicorn==0.34.0
-beautifulsoup4==4.13.3
-requests==2.32.3
+fastapi==0.68.1
+uvicorn==0.15.0
+requests==2.26.0
+beautifulsoup4==4.9.3
+selenium==4.15.2
+webdriver-manager==4.0.1
 python-dotenv==1.1.0 
